@@ -68,14 +68,27 @@ npm run build
 npm run package
 ```
 
+## GitHub Automation
+
+Repository: https://github.com/rockuen/notewise-editor
+
+Pushes to `main` run the `Publish Open VSX` GitHub Actions workflow:
+
+1. `npm ci`
+2. `npm run typecheck`
+3. `npm audit --omit=dev`
+4. `npm run package`
+5. Publish the generated VSIX to Open VSX with the `OVSX_PAT` repository secret
+
+Duplicate versions are skipped, so pushing documentation-only changes does not fail the workflow.
+
 ## Publishing
 
 Open VSX identity:
 
 - Publisher: `rockuen`
 - Extension ID: `rockuen.notewise-editor`
-- Published version: `0.1.20`
-- Prepared version: `0.1.22`
+- Published version: `0.1.22`
 - Current package: `notewise-editor-0.1.22.vsix`
 - Listing: https://open-vsx.org/extension/rockuen/notewise-editor
 
@@ -95,4 +108,4 @@ Publish history:
 - Verified after publish with `npx ovsx get rockuen.notewise-editor --metadata`.
 - The one-time token used for the publish was not written to project files. Rotate/revoke that token after use if it was shared in chat.
 - 2026-06-18: Prepared v0.1.21 to open external web/app hyperlinks via `vscode.env.openExternal` while keeping Markdown file links inside NoteWise.
-- 2026-06-18: Prepared v0.1.22 to keep inline code text at the same size as surrounding Markdown text.
+- 2026-06-18: Published v0.1.22 to Open VSX and connected GitHub push-to-main automation through GitHub Actions.
