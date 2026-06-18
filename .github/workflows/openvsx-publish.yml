@@ -69,9 +69,9 @@ jobs:
             echo "Open VSX already has rockuen.notewise-editor v${VERSION}; skipping publish."
             exit 0
           fi
-          for attempt in 1 2 3 4 5; do
-            echo "Open VSX publish attempt ${attempt}/5"
-            if npx ovsx publish *.vsix --skip-duplicate; then
+          for attempt in 1 2 3 4 5 6 7 8; do
+            echo "Open VSX publish attempt ${attempt}/8"
+            if npx ovsx -p "$OVSX_PAT" --debug publish *.vsix --skip-duplicate; then
               exit 0
             fi
             if version_exists; then
