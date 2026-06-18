@@ -1,0 +1,484 @@
+{
+  "name": "notewise-editor",
+  "displayName": "NoteWise Markdown Editor",
+  "description": "No more Obsidian switching. Calendar-aware Markdown editor for VS Code.",
+  "version": "0.1.22",
+  "publisher": "rockuen",
+  "author": {
+    "name": "rockuen",
+    "url": "https://github.com/rockuen"
+  },
+  "license": "MIT",
+  "icon": "media/notewise-icon.png",
+  "galleryBanner": {
+    "color": "#14151b",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rockuen/notewise-editor"
+  },
+  "homepage": "https://github.com/rockuen/notewise-editor#readme",
+  "bugs": {
+    "url": "https://github.com/rockuen/notewise-editor/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization",
+    "Productivity"
+  ],
+  "keywords": [
+    "markdown",
+    "calendar",
+    "notes",
+    "datewise",
+    "notewise",
+    "notewise markdown",
+    "daily notes",
+    "obsidian",
+    "wysiwyg",
+    "markdown editor",
+    "markdown preview"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCustomEditor:notewise.editor",
+    "onCommand:noteWise.editor.open",
+    "onCommand:noteWise.editor.switchEditor",
+    "onCommand:noteWise.editor.selectFont"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "notewise",
+          "title": "NoteWise",
+          "icon": "media/notewise-icon.png"
+        }
+      ]
+    },
+    "iconThemes": [
+      {
+        "id": "notewise-md-icons",
+        "label": "NoteWise Markdown File Icons",
+        "path": "./media/notewise-icon-theme.json"
+      }
+    ],
+    "views": {
+      "notewise": [
+        {
+          "type": "webview",
+          "id": "noteWise.calendarView",
+          "name": "Calendar"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "notewise.editor",
+        "displayName": "NoteWise Markdown Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "commands": [
+      {
+        "command": "noteWise.editor.open",
+        "title": "Open with NoteWise Markdown Editor",
+        "category": "NoteWise"
+      },
+      {
+        "command": "noteWise.editor.switchEditor",
+        "title": "Switch NoteWise Markdown Editor",
+        "category": "NoteWise"
+      },
+      {
+        "command": "noteWise.editor.selectFont",
+        "title": "Select Editor Font",
+        "category": "NoteWise"
+      },
+      {
+        "command": "noteWise.calendar.focusCalendar",
+        "title": "NoteWise: Focus Calendar"
+      },
+      {
+        "command": "noteWise.calendar.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "noteWise.calendar.openSettings",
+        "title": "Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "noteWise.calendar.changeShortcut",
+        "title": "NoteWise: Change Calendar Shortcut",
+        "icon": "$(keyboard)"
+      },
+      {
+        "command": "noteWise.calendar.installGogcli",
+        "title": "NoteWise: Install Google Calendar Connector"
+      },
+      {
+        "command": "noteWise.calendar.setGogPath",
+        "title": "NoteWise: Set gogcli Path"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "when": "resourceLangId == markdown",
+          "command": "noteWise.editor.open",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "when": "resourceLangId == markdown",
+          "command": "noteWise.editor.open",
+          "group": "1_open"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "noteWise.calendar.refresh",
+          "when": "view == noteWise.calendarView",
+          "group": "navigation"
+        },
+        {
+          "command": "noteWise.calendar.openSettings",
+          "when": "view == noteWise.calendarView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "noteWise.editor.switchEditor",
+        "key": "ctrl+k y",
+        "mac": "cmd+k y"
+      },
+      {
+        "command": "noteWise.editor.open",
+        "key": "ctrl+shift+alt+m",
+        "mac": "cmd+shift+alt+m",
+        "when": "editorTextFocus && editorLangId == markdown"
+      },
+      {
+        "command": "noteWise.calendar.focusCalendar",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b"
+      }
+    ],
+    "configuration": {
+      "title": "NoteWise Markdown Editor",
+      "properties": {
+        "noteWise.calendar.obsidianVault": {
+          "type": "string",
+          "default": "",
+          "description": "Obsidian vault name. Leave empty to use workspace folder name."
+        },
+        "noteWise.calendar.openMarkdownIn": {
+          "type": "string",
+          "default": "editor",
+          "enum": [
+            "obsidian",
+            "editor"
+          ],
+          "enumDescriptions": [
+            "Open .md/.canvas files in Obsidian",
+            "Open in VS Code using your default editor association."
+          ],
+          "description": "Where to open Markdown and Canvas files. NoteWise defaults to the editor to reduce Obsidian switching."
+        },
+        "noteWise.calendar.externalExtensions": {
+          "type": "string",
+          "default": "xlsx,xls,csv,png,jpg,jpeg,gif,svg,webp,bmp,pdf,zip,docx,pptx,hwp",
+          "description": "Comma-separated file extensions to open with the OS default app."
+        },
+        "noteWise.calendar.gogPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the gogcli binary. Leave empty to auto-detect."
+        },
+        "noteWise.editor.theme.mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "black",
+            "white"
+          ],
+          "default": "auto",
+          "description": "Theme palette mode. Auto follows the active VS Code color theme."
+        },
+        "noteWise.editor.theme.black.background": {
+          "type": "string",
+          "default": "#14151b",
+          "description": "Black theme editor background."
+        },
+        "noteWise.editor.theme.black.foreground": {
+          "type": "string",
+          "default": "#cccfd6",
+          "description": "Black theme editor foreground."
+        },
+        "noteWise.editor.theme.black.mutedForeground": {
+          "type": "string",
+          "default": "#717784",
+          "description": "Black theme muted Markdown syntax foreground."
+        },
+        "noteWise.editor.theme.black.headings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#ff6f61",
+            "#ff855c",
+            "#fb9a55",
+            "#eaad5e",
+            "#d3b176",
+            "#c2b596"
+          ],
+          "description": "Black theme H1 through H6 colors."
+        },
+        "noteWise.editor.theme.black.lists": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f"
+          ],
+          "description": "Black theme list marker colors per depth."
+        },
+        "noteWise.editor.theme.black.blockquotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#ff6f61",
+            "#ef8467",
+            "#dd966f",
+            "#cba47e",
+            "#bcab8f",
+            "#b1ac9c"
+          ],
+          "description": "Black theme blockquote border colors per depth."
+        },
+        "noteWise.editor.theme.white.background": {
+          "type": "string",
+          "default": "#faf8f3",
+          "description": "White theme editor background."
+        },
+        "noteWise.editor.theme.white.foreground": {
+          "type": "string",
+          "default": "#2f2c28",
+          "description": "White theme editor foreground."
+        },
+        "noteWise.editor.theme.white.mutedForeground": {
+          "type": "string",
+          "default": "#8d8579",
+          "description": "White theme muted Markdown syntax foreground."
+        },
+        "noteWise.editor.theme.white.headings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#c0392b",
+            "#c2592c",
+            "#b57328",
+            "#9c7d2b",
+            "#86763c",
+            "#736850"
+          ],
+          "description": "White theme H1 through H6 colors."
+        },
+        "noteWise.editor.theme.white.lists": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#a39888",
+            "#a39888",
+            "#a39888",
+            "#a39888",
+            "#a39888",
+            "#a39888"
+          ],
+          "description": "White theme list marker colors per depth."
+        },
+        "noteWise.editor.theme.white.blockquotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#c0392b",
+            "#bd552f",
+            "#b06f33",
+            "#9e7d44",
+            "#8d7d55",
+            "#7e7460"
+          ],
+          "description": "White theme blockquote border colors per depth."
+        },
+        "noteWise.editor.stageColors.headings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#ff6f61",
+            "#ff855c",
+            "#fb9a55",
+            "#eaad5e",
+            "#d3b176",
+            "#c2b596"
+          ],
+          "description": "Legacy override: colors used for H1 through H6. Prefer theme.black/headings and theme.white/headings."
+        },
+        "noteWise.editor.stageColors.lists": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f",
+            "#9b968f"
+          ],
+          "description": "Legacy override: colors used for list nesting depths 0 through 5+. Prefer theme.black/lists and theme.white/lists."
+        },
+        "noteWise.editor.stageColors.blockquotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 6,
+          "default": [
+            "#ff6f61",
+            "#ef8467",
+            "#dd966f",
+            "#cba47e",
+            "#bcab8f",
+            "#b1ac9c"
+          ],
+          "description": "Legacy override: colors used for blockquote depths 1 through 6+. Prefer theme.black/blockquotes and theme.white/blockquotes."
+        },
+        "noteWise.editor.indentation.headingStep": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 80,
+          "default": 0,
+          "description": "Additional indentation in pixels per heading level."
+        },
+        "noteWise.editor.indentation.listStep": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 80,
+          "default": 18,
+          "description": "Additional indentation in pixels per list nesting depth."
+        },
+        "noteWise.editor.indentation.blockquoteStep": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 80,
+          "default": 14,
+          "description": "Additional indentation in pixels per blockquote nesting depth."
+        },
+        "noteWise.editor.livePreview.syntaxVisibility": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "default": "auto",
+          "description": "Controls Markdown syntax visibility: auto hides syntax unless selected, always shows it, never keeps it visible even while selected."
+        },
+        "noteWise.editor.ui.contentScale": {
+          "type": "number",
+          "minimum": 0.7,
+          "maximum": 1,
+          "default": 0.88,
+          "description": "Global content scale factor applied to all text (body, headings, etc.)."
+        },
+        "noteWise.editor.ui.typographyScale": {
+          "type": "number",
+          "minimum": 0.85,
+          "maximum": 1.35,
+          "default": 1,
+          "description": "Global heading typography scale."
+        },
+        "noteWise.editor.ui.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Editor font family. Empty uses the OS default. Use 'NoteWise Editor: Select Editor Font' to choose from installed fonts."
+        },
+        "noteWise.editor.imageSaveFolder": {
+          "type": "string",
+          "default": "assets",
+          "description": "Folder where pasted images are saved. Relative paths are resolved from the Markdown file folder. Use ${projectRoot}/assets to save from the workspace root."
+        },
+        "noteWise.editor.customCss": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom CSS injected into the NoteWise Markdown editor webview."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup && node scripts/copy-vditor-assets.mjs",
+    "watch": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run build && vsce package --no-dependencies",
+    "publish:openvsx": "npx ovsx publish"
+  },
+  "dependencies": {
+    "vditor": "^3.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  }
+}

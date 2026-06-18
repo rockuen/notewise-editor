@@ -1,0 +1,64 @@
+name: Publish Open VSX
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+      - package-lock.json
+      - README.md
+      - .vscodeignore
+      - src/**
+      - media/**
+      - scripts/**
+      - tsconfig.json
+      - tsup.config.ts
+      - .github/workflows/openvsx-publish.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev
+
+      - name: Package VSIX
+        run: npm run package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: notewise-editor-vsix
+          path: "*.vsix"
+          if-no-files-found: error
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::Missing OVSX_PAT repository secret"
+            exit 1
+          fi
+          npx ovsx publish *.vsix --skip-duplicate

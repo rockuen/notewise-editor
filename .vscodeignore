@@ -1,0 +1,11 @@
+node_modules
+src
+scripts
+.vscode
+.github
+.omc
+tsconfig.json
+tsup.config.ts
+*.vsix
+**/*.map
+HANDOFF.md

@@ -1,0 +1,14 @@
+{
+  "iconDefinitions": {
+    "_notewise_markdown": {
+      "iconPath": "./notewise-icon.png"
+    }
+  },
+  "fileExtensions": {
+    "md": "_notewise_markdown",
+    "markdown": "_notewise_markdown"
+  },
+  "languageIds": {
+    "markdown": "_notewise_markdown"
+  }
+}
