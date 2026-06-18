@@ -61,4 +61,12 @@ jobs:
             echo "::error::Missing OVSX_PAT repository secret"
             exit 1
           fi
-          npx ovsx publish *.vsix --skip-duplicate
+          for attempt in 1 2 3 4 5; do
+            echo "Open VSX publish attempt ${attempt}/5"
+            if npx ovsx publish *.vsix --skip-duplicate; then
+              exit 0
+            fi
+            sleep $((attempt * 20))
+          done
+          echo "::error::Open VSX publish failed after 5 attempts"
+          exit 1
