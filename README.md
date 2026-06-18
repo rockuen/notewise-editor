@@ -81,6 +81,8 @@ Pushes to `main` run the `Publish Open VSX` GitHub Actions workflow:
 5. Publish the generated VSIX to Open VSX with the `OVSX_PAT` repository secret
 
 Duplicate versions are skipped, so pushing documentation-only changes does not fail the workflow.
+Automation was verified with a successful documentation-only push run:
+https://github.com/rockuen/notewise-editor/actions/runs/27730053424
 
 ## Publishing
 
@@ -109,3 +111,4 @@ Publish history:
 - The one-time token used for the publish was not written to project files. Rotate/revoke that token after use if it was shared in chat.
 - 2026-06-18: Prepared v0.1.21 to open external web/app hyperlinks via `vscode.env.openExternal` while keeping Markdown file links inside NoteWise.
 - 2026-06-18: Published v0.1.22 to Open VSX and connected GitHub push-to-main automation through GitHub Actions.
+- 2026-06-18: Verified documentation-only pushes succeed by skipping the already-published v0.1.22 version.
