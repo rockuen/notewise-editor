@@ -50,7 +50,7 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     _token: vscode.CancellationToken
   ): void | Thenable<void> {
     this.panels.add(webviewPanel);
-    this.notifyCalendarActiveFile(document);
+    this.notifyCalendarActiveFile(document, webviewPanel);
 
     webviewPanel.webview.options = {
       enableScripts: true,
@@ -127,8 +127,8 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     });
 
     const viewStateSub = webviewPanel.onDidChangeViewState(() => {
-      if (webviewPanel.active || webviewPanel.visible) {
-        this.notifyCalendarActiveFile(document);
+      if (webviewPanel.active) {
+        this.notifyCalendarActiveFile(document, webviewPanel);
       }
     });
 
@@ -143,13 +143,14 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     });
   }
 
-  private notifyCalendarActiveFile(document: vscode.TextDocument) {
+  private notifyCalendarActiveFile(document: vscode.TextDocument, webviewPanel: vscode.WebviewPanel) {
+    if (!webviewPanel.active) return;
     if (document.uri.scheme !== 'file') return;
     vscode.commands.executeCommand('noteWise.calendar.setActiveFile', document.uri.fsPath);
   }
 
   private async initializePanel(document: vscode.TextDocument, webviewPanel: vscode.WebviewPanel) {
-    this.notifyCalendarActiveFile(document);
+    this.notifyCalendarActiveFile(document, webviewPanel);
     this.post(webviewPanel, {
       type: 'init',
       content: document.getText(),

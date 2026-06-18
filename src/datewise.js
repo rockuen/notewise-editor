@@ -499,12 +499,10 @@ function cleanYamlValue(value) {
 }
 
 function getActiveMarkdownPath() {
-    const activeTextUri = vscode.window.activeTextEditor?.document?.uri;
-    const textPath = markdownPathFromUri(activeTextUri);
-    if (textPath) return textPath;
+    const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+    if (activeTab) return markdownPathFromTabInput(activeTab.input);
 
-    const tabInput = vscode.window.tabGroups.activeTabGroup?.activeTab?.input;
-    return markdownPathFromTabInput(tabInput);
+    return markdownPathFromUri(vscode.window.activeTextEditor?.document?.uri);
 }
 
 function markdownPathFromTabInput(input) {
@@ -521,7 +519,11 @@ function markdownPathFromTabInput(input) {
 function markdownPathFromUri(uri) {
     if (!uri || uri.scheme !== 'file') return '';
     const filePath = uri.fsPath;
-    return path.extname(filePath).toLowerCase() === '.md' ? filePath : '';
+    return isMarkdownFilePath(filePath) ? filePath : '';
+}
+
+function isMarkdownFilePath(filePath) {
+    return ['.md', '.markdown'].includes(path.extname(filePath).toLowerCase());
 }
 
 // ── CalendarViewProvider ──
@@ -534,7 +536,7 @@ class CalendarViewProvider {
         this._dateMap = {};
         this._eventMap = {};
         this._lastActiveMarkdownPath = '';
-        this._activePoll = null;
+        this._lastPostedMarkdownPath = '';
     }
 
     resolveWebviewView(webviewView) {
@@ -550,9 +552,12 @@ class CalendarViewProvider {
         });
 
         const watcher = vscode.workspace.createFileSystemWatcher('**/*');
-        const refreshFiles = () => {
+        const refreshFiles = (uri) => {
             this._updateIndex().then(() => {
                 this._postMessage('updateIndex', this._dateMap);
+                if (uri?.fsPath && uri.fsPath === this._lastActiveMarkdownPath) {
+                    this._setActiveMarkdownFile(uri.fsPath, true);
+                }
             });
         };
         watcher.onDidCreate(refreshFiles);
@@ -564,7 +569,6 @@ class CalendarViewProvider {
         this._context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(syncActiveFile));
         this._context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(syncActiveFile));
         this._context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabGroups(syncActiveFile));
-        this._startActiveMarkdownPolling(this._context);
         syncActiveFile();
 
         webviewView.webview.onDidReceiveMessage((msg) => {
@@ -665,7 +669,7 @@ class CalendarViewProvider {
         const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
 
         // Markdown always opens in NoteWise inside the integrated app.
-        if (ext === '.md') {
+        if (isMarkdownFilePath(filePath)) {
             const uri = vscode.Uri.file(filePath);
             await this._openWithNoteWiseEditor(uri, filePath);
             return;
@@ -710,7 +714,6 @@ class CalendarViewProvider {
     }
 
     async _openWithNoteWiseEditor(uri, filePath) {
-        this._setActiveMarkdownFile(filePath);
         try {
             await vscode.commands.executeCommand('vscode.openWith', uri, 'notewise.editor', {
                 viewColumn: vscode.ViewColumn.Active,
@@ -726,26 +729,25 @@ class CalendarViewProvider {
         }
     }
 
-    _setActiveMarkdownFile(filePath) {
-        if (!filePath || path.extname(filePath).toLowerCase() !== '.md') return;
+    _setActiveMarkdownFile(filePath, force = false) {
+        if (!filePath || !isMarkdownFilePath(filePath)) {
+            this._clearActiveMarkdownFile();
+            return;
+        }
+        if (!force && filePath === this._lastActiveMarkdownPath && filePath === this._lastPostedMarkdownPath) return;
         this._lastActiveMarkdownPath = filePath;
-        readMarkdownProperties(filePath).then((result) => this._postMessage('activeFile', result));
+        readMarkdownProperties(filePath).then((result) => {
+            if (!this._view || this._lastActiveMarkdownPath !== filePath) return;
+            this._lastPostedMarkdownPath = filePath;
+            this._postMessage('activeFile', result);
+        });
     }
 
-    _startActiveMarkdownPolling(context) {
-        if (this._activePoll) return;
-        this._activePoll = setInterval(() => {
-            if (!this._view || !this._view.visible) return;
-            const filePath = getActiveMarkdownPath();
-            if (!filePath || filePath === this._lastActiveMarkdownPath) return;
-            this._syncActiveMarkdownFile();
-        }, 300);
-        context.subscriptions.push({
-            dispose: () => {
-                if (this._activePoll) clearInterval(this._activePoll);
-                this._activePoll = null;
-            },
-        });
+    _clearActiveMarkdownFile() {
+        if (!this._lastActiveMarkdownPath && !this._lastPostedMarkdownPath) return;
+        this._lastActiveMarkdownPath = '';
+        this._lastPostedMarkdownPath = '';
+        this._postMessage('activeFile', null);
     }
 
     _scheduleActiveMarkdownSync() {
@@ -756,7 +758,10 @@ class CalendarViewProvider {
 
     _syncActiveMarkdownFile() {
         const filePath = getActiveMarkdownPath();
-        if (!filePath) return;
+        if (!filePath) {
+            this._clearActiveMarkdownFile();
+            return;
+        }
         this._setActiveMarkdownFile(filePath);
     }
 
@@ -1242,6 +1247,11 @@ window.addEventListener('message', (e) => {
             activeProperties = e.data.data;
             pendingPropertiesPath = '';
             if (!searchResults) render();
+        } else {
+            activeFilePath = '';
+            activeProperties = null;
+            pendingPropertiesPath = '';
+            if (!searchResults) render();
         }
     } else if (e.data.type === 'properties') {
         if (e.data.data && e.data.data.path === activeFilePath) {
@@ -1480,17 +1490,10 @@ function toggleDate(d) {
 }
 function navigateDay(delta) { const d = new Date(selectedDate); d.setDate(d.getDate() + delta); selectDate(d); }
 function openFile(filePath) {
-    setActiveFile(filePath);
     showToast('Opening: ' + filePath.split(/[\\\\/]/).pop());
     vscode.postMessage({ type: 'openFile', path: filePath });
 }
 function openSettings() { vscode.postMessage({ type: 'openSettings' }); }
-
-function setActiveFile(filePath) {
-    activeFilePath = filePath;
-    if (!activeProperties || activeProperties.path !== filePath) activeProperties = null;
-    requestProperties(filePath);
-}
 
 function requestProperties(filePath) {
     if (!filePath || pendingPropertiesPath === filePath) return;
@@ -1498,14 +1501,8 @@ function requestProperties(filePath) {
     vscode.postMessage({ type: 'getProperties', path: filePath });
 }
 
-function syncPropertiesForVisibleFiles(files) {
-    const markdownFiles = files.filter((item) => /\.md$/i.test(item.path));
-    if (markdownFiles.length === 0) return;
-    const visible = markdownFiles.some((item) => item.path === activeFilePath);
-    if (!activeFilePath || (!visible && !activeProperties)) {
-        activeFilePath = markdownFiles[0].path;
-        activeProperties = null;
-    }
+function syncPropertiesForActiveFile() {
+    if (!activeFilePath) return;
     if (!activeProperties || activeProperties.path !== activeFilePath) requestProperties(activeFilePath);
 }
 
@@ -1613,7 +1610,7 @@ function render() {
         const items = dateIndex[iso] || [];
         for (const item of items) allFiles.push(item);
     }
-    syncPropertiesForVisibleFiles(allFiles);
+    syncPropertiesForActiveFile();
 
     if (gogStatus === 'notInstalled') {
         html += '<div class="event-section"><div class="event-section-header">\\u{1F4C5} Schedule</div>';
@@ -1663,7 +1660,7 @@ function render() {
                 const safeTitle = item.relativePath.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
                 const href = commandUri('noteWise.calendar.openPath', [item.path]);
                 const activeClass = item.path === activeFilePath ? ' active-file' : '';
-                html += '<a class="file-item' + activeClass + '" href="' + href + '" data-path="' + safeAttr + '" onclick="setActiveFile(this.dataset.path); showToast(\\u0027Opening: ' + esc(item.name).replace(/'/g, '&#39;') + '\\u0027)" title="' + safeTitle + '">' + esc(item.name) + '</a>';
+                html += '<a class="file-item' + activeClass + '" href="' + href + '" data-path="' + safeAttr + '" title="' + safeTitle + '">' + esc(item.name) + '</a>';
             }
             html += '</div>';
         }
@@ -1689,7 +1686,7 @@ function renderSearch() {
                 const safeAttr = item.path.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
                 const safeTitle = item.relativePath.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
                 const href = commandUri('noteWise.calendar.openPath', [item.path]);
-                html += '<a class="file-item" href="' + href + '" data-path="' + safeAttr + '" onclick="setActiveFile(this.dataset.path); showToast(\\u0027Opening: ' + esc(item.name).replace(/'/g, '&#39;') + '\\u0027)" title="' + safeTitle + '">' + esc(item.name) + '</a>';
+                html += '<a class="file-item" href="' + href + '" data-path="' + safeAttr + '" title="' + safeTitle + '">' + esc(item.name) + '</a>';
             }
             html += '</div>';
         }
@@ -1742,7 +1739,7 @@ function renderRecent() {
             const safeAttr = esc(item.path);
             const safeTitle = esc(item.relativePath);
             const href = commandUri('noteWise.calendar.openPath', [item.path]);
-            html += '<a class="recent-item file-item" href="' + href + '" data-path="' + safeAttr + '" onclick="setActiveFile(this.dataset.path); showToast(\\u0027Opening: ' + esc(item.name).replace(/'/g, '&#39;') + '\\u0027)" title="' + safeTitle + '">';
+            html += '<a class="recent-item file-item" href="' + href + '" data-path="' + safeAttr + '" title="' + safeTitle + '">';
             html += '<span class="recent-name">' + esc(item.name) + '</span>';
             html += '<span class="recent-time">' + timeAgo(item.mtime) + '</span>';
             html += '</a>';
@@ -1767,6 +1764,7 @@ document.getElementById('app').addEventListener('click', (e) => {
     }
     const el = e.target.closest('.file-item');
     if (el && el.dataset.path) {
+        e.preventDefault();
         if (e.ctrlKey || e.metaKey) {
             vscode.postMessage({ type: 'copyPath', path: el.dataset.path });
         } else {
