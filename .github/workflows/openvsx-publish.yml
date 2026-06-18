@@ -61,9 +61,21 @@ jobs:
             echo "::error::Missing OVSX_PAT repository secret"
             exit 1
           fi
+          VERSION="$(node -p "require('./package.json').version")"
+          version_exists() {
+            node -e "fetch('https://open-vsx.org/api/rockuen/notewise-editor/' + process.argv[1]).then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))" "$VERSION"
+          }
+          if version_exists; then
+            echo "Open VSX already has rockuen.notewise-editor v${VERSION}; skipping publish."
+            exit 0
+          fi
           for attempt in 1 2 3 4 5; do
             echo "Open VSX publish attempt ${attempt}/5"
             if npx ovsx publish *.vsix --skip-duplicate; then
+              exit 0
+            fi
+            if version_exists; then
+              echo "Open VSX now has rockuen.notewise-editor v${VERSION}; treating publish as successful."
               exit 0
             fi
             sleep $((attempt * 20))
