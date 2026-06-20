@@ -45,7 +45,7 @@ export function createMarkdownEditor(
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
   if (!host) throw new Error('Missing Vditor host.');
-  let detachImeTabHandling: (() => void) | undefined;
+  let detachTabIndentHandling: (() => void) | undefined;
 
   const vditor = new Vditor(host, {
     width: '100%',
@@ -88,8 +88,11 @@ export function createMarkdownEditor(
       patchLinkOpening(parent);
       dockVditorToolbar(parent);
       mountTableTools(parent, () => vditor.getValue());
-      detachImeTabHandling?.();
-      detachImeTabHandling = patchImeTabHandling(parent);
+      detachTabIndentHandling?.();
+      detachTabIndentHandling = patchTabIndentHandling(parent, vditor, () => {
+        scheduleWikiLinkDecorations(parent);
+        onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
+      });
       scheduleWikiLinkDecorations(parent);
       vditor.focus();
     },
@@ -115,8 +118,8 @@ export function createMarkdownEditor(
     focus: () => vditor.focus(),
     destroy: () => {
       if (currentVditor === vditor) currentVditor = undefined;
-      detachImeTabHandling?.();
-      detachImeTabHandling = undefined;
+      detachTabIndentHandling?.();
+      detachTabIndentHandling = undefined;
       clearWikiLinkDecorations();
       vditor.destroy();
     },
@@ -456,53 +459,112 @@ function patchLinkOpening(root: HTMLElement) {
   });
 }
 
-function patchImeTabHandling(root: HTMLElement): () => void {
+function patchTabIndentHandling(root: HTMLElement, vditor: Vditor, afterCommand: () => void): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
-    if (!shouldReplayAsVditorTab(event)) return;
+    if (!isPlainTabKey(event)) return;
 
     const target = event.target as Element | null;
     if (!target || !root.contains(target)) return;
-    if (!target.closest('.vditor-ir, .vditor-wysiwyg, .vditor-sv')) return;
-    if (target.closest('input, select, button, .vditor-hint, .msl-table-tools')) return;
+    if (!target.closest('.vditor-ir, .vditor-wysiwyg')) return;
+    if (target.closest('select, textarea, button, .vditor-hint, .msl-table-tools')) return;
+
+    const listItem = getActiveListItem(root, target);
+    if (!listItem) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    const replay = new KeyboardEvent('keydown', {
-      key: 'Tab',
-      code: 'Tab',
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      shiftKey: event.shiftKey,
-      ctrlKey: event.ctrlKey,
-      metaKey: event.metaKey,
-      altKey: event.altKey,
-      repeat: event.repeat,
-    });
-    defineLegacyTabKey(replay);
-    target.dispatchEvent(replay);
+    ensureSelectionInListItem(vditor, listItem);
+    if (runVditorToolbarCommand(vditor, event.shiftKey ? 'outdent' : 'indent')) {
+      window.setTimeout(afterCommand, 0);
+    }
   };
 
   root.addEventListener('keydown', onKeyDown, true);
   return () => root.removeEventListener('keydown', onKeyDown, true);
 }
 
-function shouldReplayAsVditorTab(event: KeyboardEvent): boolean {
+function isPlainTabKey(event: KeyboardEvent): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) return false;
-  if (event.key === 'Tab' && !event.isComposing) return false;
-  return event.code === 'Tab' || event.keyCode === 9 || event.which === 9;
+  return event.key === 'Tab' || event.code === 'Tab' || event.keyCode === 9 || event.which === 9;
 }
 
-function defineLegacyTabKey(event: KeyboardEvent) {
-  for (const property of ['keyCode', 'which'] as const) {
-    try {
-      Object.defineProperty(event, property, { get: () => 9 });
-    } catch {
-      // Ignore readonly browser implementations; Vditor primarily uses key/code.
-    }
+function getActiveListItem(root: HTMLElement, target: Element): HTMLElement | undefined {
+  const targetListItem = target.closest<HTMLElement>('li') ?? undefined;
+  if (targetListItem && target.closest('input, label')) return targetListItem;
+
+  const selectedListItem = getSelectionListItem(root);
+  if (selectedListItem) return selectedListItem;
+  return targetListItem;
+}
+
+function getSelectionListItem(root: HTMLElement): HTMLElement | undefined {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return undefined;
+
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return undefined;
+  const startElement =
+    range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.startContainer as Element)
+      : range.startContainer.parentElement;
+  return startElement?.closest<HTMLElement>('li') ?? undefined;
+}
+
+function ensureSelectionInListItem(vditor: Vditor, listItem: HTMLElement) {
+  const internal = getInternalVditor(vditor);
+  const mode = internal?.currentMode;
+  const editor = mode ? internal?.[mode]?.element : undefined;
+  if (!internal || !mode || !editor) return;
+
+  const selection = window.getSelection();
+  const currentRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+  if (currentRange && listItem.contains(currentRange.startContainer)) return;
+
+  const range = document.createRange();
+  const textNode = firstTextNode(listItem);
+  if (textNode) {
+    range.setStart(textNode, 0);
+  } else {
+    range.setStart(listItem, listItem.childNodes.length);
   }
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  internal[mode]!.range = range;
+  editor.focus();
+}
+
+function firstTextNode(root: HTMLElement): Text | undefined {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  return walker.nextNode() as Text | null ?? undefined;
+}
+
+function runVditorToolbarCommand(vditor: Vditor, command: 'indent' | 'outdent'): boolean {
+  const item = getInternalVditor(vditor)?.toolbar?.elements?.[command];
+  const button = item?.firstElementChild as HTMLElement | null | undefined;
+  if (!button || button.classList.contains('vditor-menu--disabled')) return false;
+
+  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  return true;
+}
+
+type VditorModeState = { element?: HTMLElement; range?: Range };
+type VditorInternal = {
+  currentMode?: 'ir' | 'wysiwyg' | 'sv';
+  ir?: VditorModeState;
+  wysiwyg?: VditorModeState;
+  sv?: VditorModeState;
+  toolbar?: { elements?: Record<string, HTMLElement> };
+};
+
+function getInternalVditor(vditor: Vditor): VditorInternal | undefined {
+  return (vditor as unknown as { vditor?: VditorInternal }).vditor;
 }
 
 function scheduleWikiLinkDecorations(root: HTMLElement) {

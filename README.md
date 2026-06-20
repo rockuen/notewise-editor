@@ -91,7 +91,7 @@ Open VSX identity:
 - Publisher: `rockuen`
 - Extension ID: `rockuen.notewise-editor`
 - Published version: `0.1.22`
-- Current local package: `notewise-editor-0.1.24.vsix`
+- Current local package: `notewise-editor-0.1.25.vsix`
 - Listing: https://open-vsx.org/extension/rockuen/notewise-editor
 
 Publish with an Open VSX token stored in `OVSX_PAT`:
@@ -99,7 +99,7 @@ Publish with an Open VSX token stored in `OVSX_PAT`:
 ```powershell
 $env:OVSX_PAT = "<token>"
 npx ovsx verify-pat rockuen -p $env:OVSX_PAT
-npx ovsx publish ".\notewise-editor-0.1.24.vsix" -p $env:OVSX_PAT
+npx ovsx publish ".\notewise-editor-0.1.25.vsix" -p $env:OVSX_PAT
 ```
 
 The token can also be stored with `npx ovsx login rockuen` or provided by a CI secret named `OVSX_PAT`.
@@ -114,3 +114,4 @@ Publish history:
 - 2026-06-18: Verified documentation-only pushes succeed by skipping the already-published v0.1.22 version.
 - 2026-06-18: Prepared v0.1.23 to show calendar Properties only for the active Markdown editor tab.
 - 2026-06-20: Prepared v0.1.24 so Korean IME Tab/Shift+Tab key events follow the same NoteWise indentation path as English input.
+- 2026-06-20: Prepared v0.1.25 so Tab/Shift+Tab inside list and checklist items always runs NoteWise indent/outdent instead of focus traversal.
