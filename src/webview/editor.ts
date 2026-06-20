@@ -45,6 +45,7 @@ export function createMarkdownEditor(
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
   if (!host) throw new Error('Missing Vditor host.');
+  let detachImeTabHandling: (() => void) | undefined;
 
   const vditor = new Vditor(host, {
     width: '100%',
@@ -87,6 +88,8 @@ export function createMarkdownEditor(
       patchLinkOpening(parent);
       dockVditorToolbar(parent);
       mountTableTools(parent, () => vditor.getValue());
+      detachImeTabHandling?.();
+      detachImeTabHandling = patchImeTabHandling(parent);
       scheduleWikiLinkDecorations(parent);
       vditor.focus();
     },
@@ -112,6 +115,8 @@ export function createMarkdownEditor(
     focus: () => vditor.focus(),
     destroy: () => {
       if (currentVditor === vditor) currentVditor = undefined;
+      detachImeTabHandling?.();
+      detachImeTabHandling = undefined;
       clearWikiLinkDecorations();
       vditor.destroy();
     },
@@ -449,6 +454,55 @@ function patchLinkOpening(root: HTMLElement) {
     event.preventDefault();
     sendOpenWikiLink(rawWikiTarget);
   });
+}
+
+function patchImeTabHandling(root: HTMLElement): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!shouldReplayAsVditorTab(event)) return;
+
+    const target = event.target as Element | null;
+    if (!target || !root.contains(target)) return;
+    if (!target.closest('.vditor-ir, .vditor-wysiwyg, .vditor-sv')) return;
+    if (target.closest('input, select, button, .vditor-hint, .msl-table-tools')) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const replay = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      code: 'Tab',
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      shiftKey: event.shiftKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      repeat: event.repeat,
+    });
+    defineLegacyTabKey(replay);
+    target.dispatchEvent(replay);
+  };
+
+  root.addEventListener('keydown', onKeyDown, true);
+  return () => root.removeEventListener('keydown', onKeyDown, true);
+}
+
+function shouldReplayAsVditorTab(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  if (event.key === 'Tab' && !event.isComposing) return false;
+  return event.code === 'Tab' || event.keyCode === 9 || event.which === 9;
+}
+
+function defineLegacyTabKey(event: KeyboardEvent) {
+  for (const property of ['keyCode', 'which'] as const) {
+    try {
+      Object.defineProperty(event, property, { get: () => 9 });
+    } catch {
+      // Ignore readonly browser implementations; Vditor primarily uses key/code.
+    }
+  }
 }
 
 function scheduleWikiLinkDecorations(root: HTMLElement) {
