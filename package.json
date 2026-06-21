@@ -2,7 +2,7 @@
   "name": "notewise-editor",
   "displayName": "NoteWise Markdown Editor",
   "description": "No more Obsidian switching. Calendar-aware Markdown editor for VS Code.",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "rockuen",
   "author": {
     "name": "rockuen",

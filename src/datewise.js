@@ -980,7 +980,7 @@ body {
     flex-direction: column;
     height: 100vh;
 }
-#app { flex: 1; overflow-y: auto; }
+#app { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 
 .cal-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }
 .cal-header .title { font-size: 15px; font-weight: 600; cursor: pointer; }
@@ -1061,7 +1061,7 @@ body {
 .file-item:hover { background: var(--hover); }
 .file-item.active-file { background: var(--hover); color: var(--fg); }
 
-.properties-section { margin: 8px 12px 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+.properties-section { flex: 0 0 auto; margin: auto 12px 10px; border-top: 1px solid var(--border); padding-top: 6px; }
 .properties-table { display: grid; grid-template-columns: minmax(72px, 0.42fr) minmax(0, 1fr); border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
 .property-key, .property-value { min-width: 0; padding: 7px 6px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); font-size: 12px; line-height: 1.35; }
 .property-key { color: var(--muted); display: flex; align-items: center; gap: 6px; }
