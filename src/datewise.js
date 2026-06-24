@@ -729,6 +729,47 @@ class CalendarViewProvider {
         }
     }
 
+    async _createTodayNote() {
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        if (!rootPath) {
+            await vscode.window.showInformationMessage('Open a workspace folder first.');
+            return;
+        }
+
+        const { yymmdd } = getTodayInfo();
+        const prefix = `${yymmdd}_`;
+        const inputName = await vscode.window.showInputBox({
+            title: 'New Note',
+            prompt: 'Enter a file name.',
+            value: prefix,
+            valueSelection: [prefix.length, prefix.length],
+            ignoreFocusOut: true,
+            validateInput(value) {
+                const name = value.trim();
+                if (!name) return 'Enter a file name.';
+                if (/[<>:"/\\|?*\x00-\x1f]/.test(name)) return 'File names cannot contain < > : " / \\ | ? *';
+                return null;
+            },
+        });
+        if (inputName === undefined) return;
+
+        const fileName = /\.(md|markdown)$/i.test(inputName.trim()) ? inputName.trim() : `${inputName.trim()}.md`;
+        const configuredFolder = vscode.workspace
+            .getConfiguration('noteWise.calendar')
+            .get('newNoteFolder', '0. Inbox')
+            .trim() || '0. Inbox';
+        const targetDir = path.isAbsolute(configuredFolder) ? configuredFolder : path.join(rootPath, configuredFolder);
+        fs.mkdirSync(targetDir, { recursive: true });
+        const filePath = path.join(targetDir, fileName);
+        const uri = vscode.Uri.file(filePath);
+
+        await ensureDailyNote(uri, yymmdd);
+        await this._openWithNoteWiseEditor(uri, filePath);
+        await this._updateIndex();
+        this._postMessage('updateIndex', this._dateMap);
+        this._setActiveMarkdownFile(filePath, true);
+    }
+
     _setActiveMarkdownFile(filePath, force = false) {
         if (!filePath || !isMarkdownFilePath(filePath)) {
             this._clearActiveMarkdownFile();
@@ -1842,6 +1883,14 @@ function activateDateWise(context) {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('noteWise.calendar.newNote', () => {
+            provider._createTodayNote().catch((error) => {
+                vscode.window.showErrorMessage(`New Note failed: ${error?.message || String(error)}`);
+            });
+        })
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('noteWise.calendar.openSettings', () => {
             vscode.commands.executeCommand('workbench.action.openSettings', 'noteWise.calendar');
         })
@@ -1855,7 +1904,7 @@ function activateDateWise(context) {
         vscode.commands.registerCommand('noteWise.calendar.changeShortcut', () => {
             vscode.commands.executeCommand(
                 'workbench.action.openGlobalKeybindings',
-                '@ext:local.notewise-editor'
+                '@ext:rockuen.notewise-editor'
             );
         })
     );

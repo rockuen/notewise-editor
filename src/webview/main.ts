@@ -88,8 +88,8 @@ function normalizeSettings(settings: EditorSettings): EditorSettings {
     fontSize: clamp(settings.fontSize, 8, 48, 14),
     lineHeight: clamp(settings.lineHeight, 1.2, 2.4, 1.6),
     tabSize: clamp(settings.tabSize, 1, 8, 4),
-    contentScale: clamp(settings.contentScale, 0.7, 1.0, 0.88),
-    typographyScale: clamp(settings.typographyScale, 0.85, 1.35, 1),
+    contentScale: clamp(settings.contentScale, 0.7, 2, 0.88),
+    typographyScale: clamp(settings.typographyScale, 0.85, 2.7, 1),
   };
 }
 

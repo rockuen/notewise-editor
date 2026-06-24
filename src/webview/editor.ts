@@ -41,6 +41,7 @@ export function createMarkdownEditor(
   onLocalChange: (content: string) => void
 ): NoteWiseEditorView {
   applyCssVariables(settings);
+  scheduleHeadingPresentation(parent);
   let visibleDocument = splitYamlFrontmatter(content);
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
@@ -75,6 +76,7 @@ export function createMarkdownEditor(
     input(value: string) {
       if (applyingRemoteUpdate) return;
       scheduleWikiLinkDecorations(parent);
+      scheduleHeadingPresentation(parent);
       onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, value));
     },
     upload: {
@@ -94,6 +96,7 @@ export function createMarkdownEditor(
         onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
       });
       scheduleWikiLinkDecorations(parent);
+      scheduleHeadingPresentation(parent);
       vditor.focus();
     },
   });
@@ -110,6 +113,7 @@ export function createMarkdownEditor(
       try {
         vditor.setValue(split.body);
         scheduleWikiLinkDecorations(parent);
+        scheduleHeadingPresentation(parent);
       } finally {
         applyingRemoteUpdate = false;
       }
@@ -137,6 +141,7 @@ export function insertEditorText(view: NoteWiseEditorView, text: string) {
 
 export function applyEditorSettings(_view: NoteWiseEditorView, settings: EditorSettings) {
   applyCssVariables(settings);
+  scheduleHeadingPresentation(document);
   const vditorRoot = document.querySelector<HTMLElement>('.vditor');
   if (vditorRoot) {
     vditorRoot.classList.toggle('vditor--dark', settings.palette.mode === 'black');
@@ -155,6 +160,7 @@ export function previewDocColor(role: ColorRole, value: string, index?: number) 
       break;
     case 'heading':
       if (typeof index === 'number') root.style.setProperty(`--msl-heading-${index + 1}-color`, value);
+      scheduleHeadingPresentation(document);
       break;
     case 'list':
       if (typeof index === 'number') root.style.setProperty(`--msl-list-${index}-color`, value);
@@ -900,6 +906,9 @@ function applyCssVariables(settings: EditorSettings) {
   root.style.setProperty('--msl-editor-line-height', String(settings.lineHeight));
   root.style.setProperty('--msl-content-scale', String(settings.contentScale));
   root.style.setProperty('--msl-typography-scale', String(settings.typographyScale));
+  root.style.setProperty('--msl-heading-indent-step', `${settings.indentation.headingStep || 12}px`);
+  root.style.setProperty('--msl-list-indent-step', `${settings.indentation.listStep}px`);
+  root.style.setProperty('--msl-quote-indent-step', `${settings.indentation.blockquoteStep}px`);
   root.style.setProperty('--msl-cursor', settings.palette.cursor || settings.stageColors.headings[0] || '#ff6f61');
   root.dataset.mslTheme = settings.palette.mode;
   applyCustomCss(settings.customCss);
@@ -909,6 +918,58 @@ function applyCssVariables(settings: EditorSettings) {
     root.style.setProperty(`--msl-list-${index}-color`, settings.stageColors.lists[index] ?? settings.stageColors.lists[0]);
     root.style.setProperty(`--msl-quote-${index}-color`, settings.stageColors.blockquotes[index] ?? settings.stageColors.blockquotes[0]);
   }
+}
+
+function scheduleHeadingPresentation(root: ParentNode) {
+  const target = root || document;
+  const run = () => applyHeadingPresentation(target);
+  requestAnimationFrame(run);
+  setTimeout(run, 60);
+  setTimeout(run, 180);
+}
+
+function applyHeadingPresentation(root: ParentNode) {
+  if (!root?.querySelectorAll) return;
+  const colors = getHeadingColors();
+  const blocks = new Map<HTMLElement, number>();
+
+  root.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').forEach((element) => {
+    const level = Number(element.tagName.slice(1));
+    if (level >= 1 && level <= 6) blocks.set(element, level);
+  });
+
+  root.querySelectorAll<HTMLElement>('.vditor-ir__marker--heading,[data-type="heading-marker"]').forEach((marker) => {
+    const markerText = marker.textContent || '';
+    const level = Math.max(1, Math.min(6, (markerText.match(/#/g) || []).length || 1));
+    const block = marker.closest<HTMLElement>('h1,h2,h3,h4,h5,h6,[data-block="0"],p,div');
+    if (block) blocks.set(block, level);
+  });
+
+  for (const [element, level] of blocks) {
+    applyHeadingColor(element, level, colors[level - 1]);
+  }
+}
+
+function getHeadingColors() {
+  const fallback = ['#ff7af2', '#ffcc3d', '#22d3ee', '#8bd450', '#c4b5fd', '#f5a524'];
+  const styles = getComputedStyle(document.documentElement);
+  return fallback.map((color, index) => styles.getPropertyValue(`--msl-heading-${index + 1}-color`).trim() || color);
+}
+
+function applyHeadingColor(element: HTMLElement, level: number, color: string) {
+  element.dataset.notewiseHeadingLevel = String(level);
+  element.style.setProperty('color', color, 'important');
+  if (/^H[1-6]$/.test(element.tagName)) {
+    const indent = Math.max(0, level - 2);
+    element.style.setProperty(
+      'margin-left',
+      indent > 0 ? `calc(var(--msl-heading-indent-step, 12px) * ${indent})` : '0',
+      'important'
+    );
+  }
+  element.querySelectorAll<HTMLElement>('*').forEach((child) => {
+    child.style.setProperty('color', color, 'important');
+  });
 }
 
 function applyCustomCss(css: string) {
@@ -929,9 +990,9 @@ export function injectChromeStyles() {
   style.id = 'msl-chrome-styles';
   style.textContent = `
 :root {
-  color-scheme: light dark;
-  --msl-shell-bg: #101112;
-  --msl-card-bg: #1b1b1d;
+  color-scheme: dark;
+  --msl-shell-bg: var(--vscode-editor-background, #101112);
+  --msl-card-bg: var(--vscode-editor-background, var(--msl-doc-bg, #1b1b1d));
   --msl-doc-surface: color-mix(in srgb, var(--msl-card-bg) 94%, white 6%);
   --msl-doc-rule: rgba(255,255,255,0.11);
   --msl-doc-rule-soft: rgba(255,255,255,0.07);
@@ -945,20 +1006,20 @@ export function injectChromeStyles() {
   --msl-soft-border: rgba(255,255,255,0.075);
 }
 :root[data-msl-theme="white"] {
-  color-scheme: light;
-  --msl-shell-bg: var(--vscode-editor-background, #f3f3f3);
-  --msl-card-bg: var(--vscode-editor-background, #ffffff);
-  --msl-doc-surface: color-mix(in srgb, var(--msl-card-bg) 96%, #f2eadc 4%);
-  --msl-doc-rule: rgba(53,45,35,0.16);
-  --msl-doc-rule-soft: rgba(53,45,35,0.09);
-  --msl-doc-table-header: rgba(192,57,43,0.055);
-  --msl-doc-table-hover: rgba(192,57,43,0.035);
+  color-scheme: dark;
+  --msl-shell-bg: var(--vscode-editor-background, #101112);
+  --msl-card-bg: var(--vscode-editor-background, var(--msl-doc-bg, #1b1b1d));
+  --msl-doc-surface: color-mix(in srgb, var(--msl-card-bg) 94%, white 6%);
+  --msl-doc-rule: rgba(255,255,255,0.11);
+  --msl-doc-rule-soft: rgba(255,255,255,0.07);
+  --msl-doc-table-header: rgba(255,255,255,0.045);
+  --msl-doc-table-hover: rgba(255,255,255,0.035);
   --msl-link-color: #b84d36;
   --msl-link-hover: #8f3428;
-  --msl-topbar-bg: var(--vscode-editorWidget-background, #f6f6f6);
-  --msl-menu-bg: var(--vscode-editorWidget-background, #ffffff);
-  --msl-border: var(--vscode-panel-border, rgba(0,0,0,0.12));
-  --msl-soft-border: rgba(0,0,0,0.08);
+  --msl-topbar-bg: #252527;
+  --msl-menu-bg: #252527;
+  --msl-border: rgba(255,255,255,0.105);
+  --msl-soft-border: rgba(255,255,255,0.075);
 }
 html, body {
   margin: 0;
@@ -1266,12 +1327,48 @@ body {
 .vditor-reset h1:first-child,
 .vditor-reset h2:first-child,
 .vditor-reset h3:first-child { margin-top: 0 !important; }
-.vditor-reset h1 { color: var(--msl-heading-1-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 2.02) !important; }
-.vditor-reset h2 { color: var(--msl-heading-2-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.62) !important; }
-.vditor-reset h3 { color: var(--msl-heading-3-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.34) !important; }
-.vditor-reset h4 { color: var(--msl-heading-4-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.14) !important; }
-.vditor-reset h5 { color: var(--msl-heading-5-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.02) !important; }
-.vditor-reset h6 { color: var(--msl-heading-6-color) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * .94) !important; text-transform: uppercase; }
+.vditor-reset h1,
+.vditor-reset h1 * { color: var(--msl-heading-1-color) !important; }
+.vditor-reset h2,
+.vditor-reset h2 * { color: var(--msl-heading-2-color) !important; }
+.vditor-reset h3,
+.vditor-reset h3 * { color: var(--msl-heading-3-color) !important; }
+.vditor-reset h4,
+.vditor-reset h4 * { color: var(--msl-heading-4-color) !important; }
+.vditor-reset h5,
+.vditor-reset h5 * { color: var(--msl-heading-5-color) !important; }
+.vditor-reset h6,
+.vditor-reset h6 * { color: var(--msl-heading-6-color) !important; }
+.vditor-ir .vditor-reset h1 .vditor-ir__node,
+.vditor-ir .vditor-reset h1 .vditor-ir__marker,
+.vditor-ir .vditor-reset h1 [data-type],
+.vditor-wysiwyg .vditor-reset h1 [data-type] { color: var(--msl-heading-1-color) !important; }
+.vditor-ir .vditor-reset h2 .vditor-ir__node,
+.vditor-ir .vditor-reset h2 .vditor-ir__marker,
+.vditor-ir .vditor-reset h2 [data-type],
+.vditor-wysiwyg .vditor-reset h2 [data-type] { color: var(--msl-heading-2-color) !important; }
+.vditor-ir .vditor-reset h3 .vditor-ir__node,
+.vditor-ir .vditor-reset h3 .vditor-ir__marker,
+.vditor-ir .vditor-reset h3 [data-type],
+.vditor-wysiwyg .vditor-reset h3 [data-type] { color: var(--msl-heading-3-color) !important; }
+.vditor-ir .vditor-reset h4 .vditor-ir__node,
+.vditor-ir .vditor-reset h4 .vditor-ir__marker,
+.vditor-ir .vditor-reset h4 [data-type],
+.vditor-wysiwyg .vditor-reset h4 [data-type] { color: var(--msl-heading-4-color) !important; }
+.vditor-ir .vditor-reset h5 .vditor-ir__node,
+.vditor-ir .vditor-reset h5 .vditor-ir__marker,
+.vditor-ir .vditor-reset h5 [data-type],
+.vditor-wysiwyg .vditor-reset h5 [data-type] { color: var(--msl-heading-5-color) !important; }
+.vditor-ir .vditor-reset h6 .vditor-ir__node,
+.vditor-ir .vditor-reset h6 .vditor-ir__marker,
+.vditor-ir .vditor-reset h6 [data-type],
+.vditor-wysiwyg .vditor-reset h6 [data-type] { color: var(--msl-heading-6-color) !important; }
+.vditor-reset h1 { margin-left: 0 !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 2.02) !important; }
+.vditor-reset h2 { margin-left: 0 !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.62) !important; }
+.vditor-reset h3 { margin-left: var(--msl-heading-indent-step, 12px) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.34) !important; }
+.vditor-reset h4 { margin-left: calc(var(--msl-heading-indent-step, 12px) * 2) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.14) !important; }
+.vditor-reset h5 { margin-left: calc(var(--msl-heading-indent-step, 12px) * 3) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * 1.02) !important; }
+.vditor-reset h6 { margin-left: calc(var(--msl-heading-indent-step, 12px) * 4) !important; font-size: calc(var(--msl-editor-font-size) * var(--msl-content-scale, 1) * var(--msl-typography-scale) * .94) !important; text-transform: uppercase; }
 .vditor-reset p,
 .vditor-reset ul,
 .vditor-reset ol,
@@ -1327,15 +1424,15 @@ body {
   font-size: 10px;
 }
 .vditor-reset blockquote {
-  padding: 10px 14px !important;
-  border-left: 3px solid var(--msl-quote-0-color, var(--msl-heading-1-color)) !important;
-  border-radius: 0 8px 8px 0 !important;
-  background: color-mix(in srgb, var(--msl-heading-1-color) 7%, transparent) !important;
-  color: var(--msl-doc-muted, var(--vscode-descriptionForeground)) !important;
+  padding: .35em 0 .35em 1em !important;
+  border-left: 2px solid color-mix(in srgb, var(--msl-doc-muted, #8f949e) 70%, transparent) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
 }
 .vditor-reset blockquote p,
 .vditor-reset blockquote li {
-  color: var(--msl-doc-muted, var(--vscode-descriptionForeground)) !important;
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
 }
 .vditor-reset table {
   width: 100%;
@@ -1365,21 +1462,37 @@ body {
 .vditor-reset tr:hover > td {
   background: var(--msl-doc-table-hover) !important;
 }
-.vditor-reset code:not(pre code) {
-  padding: .12em .38em !important;
-  border: 1px solid var(--msl-doc-rule-soft);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--msl-doc-fg) 8%, transparent) !important;
-  color: var(--msl-link-color) !important;
+.vditor-reset code:not(pre code),
+.vditor-reset p code:not(.hljs):not(.highlight-chroma),
+.vditor-reset li code:not(.hljs):not(.highlight-chroma),
+.vditor-reset td code:not(.hljs):not(.highlight-chroma),
+.vditor-reset th code:not(.hljs):not(.highlight-chroma),
+.vditor-reset blockquote code:not(.hljs):not(.highlight-chroma) {
+  padding: 0 .24em !important;
+  border: 0 !important;
+  border-radius: 3px !important;
+  background: color-mix(in srgb, var(--msl-doc-fg, #e8eaed) 8%, transparent) !important;
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
+  font-family: inherit !important;
   font-size: 1em !important;
+  font-weight: inherit !important;
+  line-height: 1.08 !important;
+  vertical-align: baseline !important;
 }
 .vditor-reset pre {
-  border: 1px solid var(--msl-doc-rule-soft) !important;
+  border: 1px solid color-mix(in srgb, var(--msl-doc-fg, #e8eaed) 13%, transparent) !important;
   border-radius: 9px !important;
-  background: color-mix(in srgb, var(--msl-card-bg) 86%, black 14%) !important;
+  background: #2a2b2f !important;
+  color: #f1f3f4 !important;
 }
-:root[data-msl-theme="white"] .vditor-reset pre {
-  background: color-mix(in srgb, var(--msl-card-bg) 94%, #e8ddcb 6%) !important;
+.vditor-reset pre > code,
+.vditor-reset pre code,
+.vditor-reset pre code.hljs,
+.vditor-reset pre .hljs,
+.vditor-reset .hljs {
+  background: transparent !important;
+  color: #f1f3f4 !important;
+  font-size: 1em !important;
 }
 .vditor-panel { z-index: 40; }
 .msl-table-tools { position: absolute; display: none; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--msl-border); border-radius: 7px; background: var(--msl-menu-bg); box-shadow: 0 8px 24px rgba(0,0,0,.28); z-index: 50; }

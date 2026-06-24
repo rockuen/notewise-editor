@@ -43,11 +43,11 @@ export function mountSettingsPanel(topbar: HTMLElement, settings: EditorSettings
       </label>
       <label class="msl-menu__row">
         <span>Size</span>
-        <input data-control="contentScale" type="range" min="0.7" max="1.0" step="0.01">
+        <input data-control="contentScale" type="range" min="0.7" max="2.0" step="0.01">
       </label>
       <label class="msl-menu__row">
         <span>Scale</span>
-        <input data-control="scale" type="range" min="0.85" max="1.35" step="0.01">
+        <input data-control="scale" type="range" min="0.85" max="2.7" step="0.01">
       </label>
       <label class="msl-menu__row">
         <span>Lists</span>

@@ -6,19 +6,16 @@ import type { ClientMessage, ColorRole, DocumentInfo, EditorPalette, EditorSetti
 
 export const VIEW_TYPE = 'notewise.editor';
 
-// Refined-accent palette: headings descend through a single warm family
-// (coral -> sunset orange -> amber -> sand). Lists keep a quiet neutral marker
-// and blockquotes only tint their left border, so body text stays calm.
-const DEFAULT_HEADING_COLORS = ['#ff6f61', '#ff855c', '#fb9a55', '#eaad5e', '#d3b176', '#c2b596'];
+const DEFAULT_HEADING_COLORS = ['#ff7af2', '#ffcc3d', '#22d3ee', '#8bd450', '#c4b5fd', '#f5a524'];
 const DEFAULT_LIST_COLORS = ['#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f'];
-const DEFAULT_QUOTE_COLORS = ['#ff6f61', '#ef8467', '#dd966f', '#cba47e', '#bcab8f', '#b1ac9c'];
+const DEFAULT_QUOTE_COLORS = ['#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e'];
 
-const BLACK_HEADING_COLORS = ['#ff6f61', '#ff855c', '#fb9a55', '#eaad5e', '#d3b176', '#c2b596'];
+const BLACK_HEADING_COLORS = ['#ff7af2', '#ffcc3d', '#22d3ee', '#8bd450', '#c4b5fd', '#f5a524'];
 const BLACK_LIST_COLORS = ['#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f'];
-const BLACK_QUOTE_COLORS = ['#ff6f61', '#ef8467', '#dd966f', '#cba47e', '#bcab8f', '#b1ac9c'];
-const WHITE_HEADING_COLORS = ['#c0392b', '#c2592c', '#b57328', '#9c7d2b', '#86763c', '#736850'];
+const BLACK_QUOTE_COLORS = ['#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e'];
+const WHITE_HEADING_COLORS = ['#b0009f', '#9b6500', '#007d91', '#4f7d00', '#6d55b8', '#995f00'];
 const WHITE_LIST_COLORS = ['#a39888', '#a39888', '#a39888', '#a39888', '#a39888', '#a39888'];
-const WHITE_QUOTE_COLORS = ['#c0392b', '#bd552f', '#b06f33', '#9e7d44', '#8d7d55', '#7e7460'];
+const WHITE_QUOTE_COLORS = ['#6f7782', '#6f7782', '#6f7782', '#6f7782', '#6f7782', '#6f7782'];
 
 export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvider {
   private readonly panels = new Set<vscode.WebviewPanel>();
@@ -285,8 +282,8 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
       fontSize,
       lineHeight: clampNumber(lineHeight, 1.2, 2.4, 1.6),
       tabSize: clampNumber(editor.get<number>('tabSize', 4), 1, 8, 4),
-      contentScale: clampNumber(config.get<number>('ui.contentScale', 0.88), 0.7, 1.0, 0.88),
-      typographyScale: clampNumber(config.get<number>('ui.typographyScale', 1), 0.85, 1.35, 1),
+      contentScale: clampNumber(config.get<number>('ui.contentScale', 0.88), 0.7, 2, 0.88),
+      typographyScale: clampNumber(config.get<number>('ui.typographyScale', 1), 0.85, 2.7, 1),
       syntaxVisibility: normalizeSyntaxVisibility(config.get<SyntaxVisibility>('livePreview.syntaxVisibility', 'auto')),
       themeMode: normalizeThemeMode(config.get<ThemeMode>('theme.mode', 'auto')),
       breadcrumbsEnabled: vscode.workspace.getConfiguration('breadcrumbs').get<boolean>('enabled', true),
@@ -294,7 +291,7 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
       stageColors: this.getStageColors(),
       palette: this.getPalette(),
       indentation: {
-        headingStep: clampNumber(config.get<number>('indentation.headingStep', 0), 0, 80, 0),
+        headingStep: clampNumber(config.get<number>('indentation.headingStep', 12), 0, 80, 12),
         listStep: clampNumber(config.get<number>('indentation.listStep', 18), 0, 80, 18),
         blockquoteStep: clampNumber(config.get<number>('indentation.blockquoteStep', 14), 0, 80, 14),
       } satisfies StageIndentation,
@@ -517,19 +514,19 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     const config = vscode.workspace.getConfiguration('noteWise.editor');
     const mode = this.getThemeMode();
     const isBlack = mode === 'black';
-    const background = config.get<string>(`theme.${mode}.background`, isBlack ? '#14151b' : '#faf8f3');
-    const foreground = config.get<string>(`theme.${mode}.foreground`, isBlack ? '#cccfd6' : '#2f2c28');
-    const mutedForeground = config.get<string>(`theme.${mode}.mutedForeground`, isBlack ? '#717784' : '#8d8579');
+    const background = config.get<string>(`theme.${mode}.background`, '#1b1b1d');
+    const foreground = config.get<string>(`theme.${mode}.foreground`, '#cccfd6');
+    const mutedForeground = config.get<string>(`theme.${mode}.mutedForeground`, '#717784');
 
     return {
       mode,
       background,
       foreground,
       mutedForeground,
-      activeLine: isBlack ? '#1b1c24' : '#f1ede4',
-      gutterBackground: isBlack ? '#14151b' : '#faf8f3',
-      gutterForeground: isBlack ? '#4b4f59' : '#b3ab9c',
-      selectionBackground: isBlack ? '#34415e80' : '#d8cdbb80',
+      activeLine: '#222327',
+      gutterBackground: background,
+      gutterForeground: '#4b4f59',
+      selectionBackground: '#34415e80',
       cursor: isBlack ? '#ff7a6d' : '#c0392b',
     };
   }

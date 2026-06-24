@@ -2,7 +2,7 @@
   "name": "notewise-editor",
   "displayName": "NoteWise Markdown Editor",
   "description": "No more Obsidian switching. Calendar-aware Markdown editor for VS Code.",
-  "version": "0.1.26",
+  "version": "0.1.37",
   "publisher": "rockuen",
   "author": {
     "name": "rockuen",
@@ -48,7 +48,8 @@
     "onCustomEditor:notewise.editor",
     "onCommand:noteWise.editor.open",
     "onCommand:noteWise.editor.switchEditor",
-    "onCommand:noteWise.editor.selectFont"
+    "onCommand:noteWise.editor.selectFont",
+    "onCommand:noteWise.calendar.newNote"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -118,6 +119,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "noteWise.calendar.newNote",
+        "title": "New Note",
+        "icon": "$(add)"
+      },
+      {
         "command": "noteWise.calendar.openSettings",
         "title": "Settings",
         "icon": "$(gear)"
@@ -155,12 +161,17 @@
         {
           "command": "noteWise.calendar.refresh",
           "when": "view == noteWise.calendarView",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "noteWise.calendar.newNote",
+          "when": "view == noteWise.calendarView",
+          "group": "navigation@2"
         },
         {
           "command": "noteWise.calendar.openSettings",
           "when": "view == noteWise.calendarView",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ]
     },
@@ -208,6 +219,11 @@
           "default": "xlsx,xls,csv,png,jpg,jpeg,gif,svg,webp,bmp,pdf,zip,docx,pptx,hwp",
           "description": "Comma-separated file extensions to open with the OS default app."
         },
+        "noteWise.calendar.newNoteFolder": {
+          "type": "string",
+          "default": "0. Inbox",
+          "description": "Folder where New Note creates files. Relative paths are resolved from the workspace root. Examples: 0. Inbox, 00-inbox, 1. Daily."
+        },
         "noteWise.calendar.gogPath": {
           "type": "string",
           "default": "",
@@ -225,7 +241,7 @@
         },
         "noteWise.editor.theme.black.background": {
           "type": "string",
-          "default": "#14151b",
+          "default": "#1b1b1d",
           "description": "Black theme editor background."
         },
         "noteWise.editor.theme.black.foreground": {
@@ -245,12 +261,12 @@
           },
           "minItems": 6,
           "default": [
-            "#ff6f61",
-            "#ff855c",
-            "#fb9a55",
-            "#eaad5e",
-            "#d3b176",
-            "#c2b596"
+            "#ff7af2",
+            "#ffcc3d",
+            "#22d3ee",
+            "#8bd450",
+            "#c4b5fd",
+            "#f5a524"
           ],
           "description": "Black theme H1 through H6 colors."
         },
@@ -277,28 +293,28 @@
           },
           "minItems": 6,
           "default": [
-            "#ff6f61",
-            "#ef8467",
-            "#dd966f",
-            "#cba47e",
-            "#bcab8f",
-            "#b1ac9c"
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e"
           ],
           "description": "Black theme blockquote border colors per depth."
         },
         "noteWise.editor.theme.white.background": {
           "type": "string",
-          "default": "#faf8f3",
+          "default": "#1b1b1d",
           "description": "White theme editor background."
         },
         "noteWise.editor.theme.white.foreground": {
           "type": "string",
-          "default": "#2f2c28",
+          "default": "#cccfd6",
           "description": "White theme editor foreground."
         },
         "noteWise.editor.theme.white.mutedForeground": {
           "type": "string",
-          "default": "#8d8579",
+          "default": "#717784",
           "description": "White theme muted Markdown syntax foreground."
         },
         "noteWise.editor.theme.white.headings": {
@@ -308,12 +324,12 @@
           },
           "minItems": 6,
           "default": [
-            "#c0392b",
-            "#c2592c",
-            "#b57328",
-            "#9c7d2b",
-            "#86763c",
-            "#736850"
+            "#b0009f",
+            "#9b6500",
+            "#007d91",
+            "#4f7d00",
+            "#6d55b8",
+            "#995f00"
           ],
           "description": "White theme H1 through H6 colors."
         },
@@ -340,12 +356,12 @@
           },
           "minItems": 6,
           "default": [
-            "#c0392b",
-            "#bd552f",
-            "#b06f33",
-            "#9e7d44",
-            "#8d7d55",
-            "#7e7460"
+            "#6f7782",
+            "#6f7782",
+            "#6f7782",
+            "#6f7782",
+            "#6f7782",
+            "#6f7782"
           ],
           "description": "White theme blockquote border colors per depth."
         },
@@ -356,12 +372,12 @@
           },
           "minItems": 6,
           "default": [
-            "#ff6f61",
-            "#ff855c",
-            "#fb9a55",
-            "#eaad5e",
-            "#d3b176",
-            "#c2b596"
+            "#ff7af2",
+            "#ffcc3d",
+            "#22d3ee",
+            "#8bd450",
+            "#c4b5fd",
+            "#f5a524"
           ],
           "description": "Legacy override: colors used for H1 through H6. Prefer theme.black/headings and theme.white/headings."
         },
@@ -388,12 +404,12 @@
           },
           "minItems": 6,
           "default": [
-            "#ff6f61",
-            "#ef8467",
-            "#dd966f",
-            "#cba47e",
-            "#bcab8f",
-            "#b1ac9c"
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e",
+            "#8f949e"
           ],
           "description": "Legacy override: colors used for blockquote depths 1 through 6+. Prefer theme.black/blockquotes and theme.white/blockquotes."
         },
@@ -401,7 +417,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 80,
-          "default": 0,
+          "default": 12,
           "description": "Additional indentation in pixels per heading level."
         },
         "noteWise.editor.indentation.listStep": {
@@ -431,14 +447,14 @@
         "noteWise.editor.ui.contentScale": {
           "type": "number",
           "minimum": 0.7,
-          "maximum": 1,
+          "maximum": 2,
           "default": 0.88,
           "description": "Global content scale factor applied to all text (body, headings, etc.)."
         },
         "noteWise.editor.ui.typographyScale": {
           "type": "number",
           "minimum": 0.85,
-          "maximum": 1.35,
+          "maximum": 2.7,
           "default": 1,
           "description": "Global heading typography scale."
         },
@@ -465,7 +481,7 @@
     "watch": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "vscode:prepublish": "npm run build",
-    "package": "npm run build && vsce package --no-dependencies",
+    "package": "vsce package --no-dependencies",
     "publish:openvsx": "npx ovsx publish"
   },
   "dependencies": {
