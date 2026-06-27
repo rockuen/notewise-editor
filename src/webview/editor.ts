@@ -88,6 +88,7 @@ export function createMarkdownEditor(
     },
     after() {
       patchLinkOpening(parent);
+      patchCodeBlockCopy(parent);
       dockVditorToolbar(parent);
       mountTableTools(parent, () => vditor.getValue());
       detachTabIndentHandling?.();
@@ -463,6 +464,65 @@ function patchLinkOpening(root: HTMLElement) {
     event.preventDefault();
     sendOpenWikiLink(rawWikiTarget);
   });
+}
+
+/**
+ * Vditor renders a per-code-block copy button (`.vditor-copy`) that copies via
+ * `document.execCommand('copy')`, which is blocked inside the VS Code webview.
+ * Intercept the click in the capture phase and copy with the async Clipboard API,
+ * falling back to a temporary textarea + execCommand if that is unavailable.
+ */
+function patchCodeBlockCopy(root: HTMLElement) {
+  root.addEventListener(
+    'click',
+    (event) => {
+      const target = event.target as HTMLElement | null;
+      const copyContainer = target?.closest<HTMLElement>('.vditor-copy');
+      if (!copyContainer) return;
+
+      const textarea = copyContainer.querySelector<HTMLTextAreaElement>('textarea');
+      const code = textarea?.value ?? '';
+      if (!code) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void copyCodeBlock(code);
+    },
+    true
+  );
+}
+
+async function copyCodeBlock(code: string) {
+  try {
+    await navigator.clipboard.writeText(code);
+    sendInfo('Copied code block.');
+    return;
+  } catch {
+    if (copyViaExecCommand(code)) {
+      sendInfo('Copied code block.');
+      return;
+    }
+    sendError('Copy code block failed.');
+  }
+}
+
+function copyViaExecCommand(code: string): boolean {
+  const textarea = document.createElement('textarea');
+  textarea.value = code;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-100000px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let succeeded = false;
+  try {
+    succeeded = document.execCommand('copy');
+  } catch {
+    succeeded = false;
+  }
+  document.body.removeChild(textarea);
+  return succeeded;
 }
 
 function patchTabIndentHandling(root: HTMLElement, vditor: Vditor, afterCommand: () => void): () => void {
@@ -1493,6 +1553,21 @@ body {
   background: transparent !important;
   color: #f1f3f4 !important;
   font-size: 1em !important;
+}
+/* The bundled highlight.js theme renders string/number tokens in dark navy
+   (#032f62 / #005cc5), which is nearly invisible on the dark code background.
+   Brighten them so quoted literals stay readable. */
+.vditor-reset pre .hljs-string,
+.vditor-reset pre .hljs-string *,
+.vditor-reset .hljs-string,
+.vditor-reset pre .hljs-meta .hljs-string {
+  color: #98c379 !important;
+}
+.vditor-reset pre .hljs-number,
+.vditor-reset pre .hljs-literal,
+.vditor-reset .hljs-number,
+.vditor-reset .hljs-literal {
+  color: #6cb6ff !important;
 }
 .vditor-panel { z-index: 40; }
 .msl-table-tools { position: absolute; display: none; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--msl-border); border-radius: 7px; background: var(--msl-menu-bg); box-shadow: 0 8px 24px rgba(0,0,0,.28); z-index: 50; }
