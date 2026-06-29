@@ -532,23 +532,84 @@ function patchTabIndentHandling(root: HTMLElement, vditor: Vditor, afterCommand:
     const target = event.target as Element | null;
     if (!target || !root.contains(target)) return;
     if (!target.closest('.vditor-ir, .vditor-wysiwyg')) return;
+    // Leave auto-complete hints, table tools, and real form controls on native Tab.
     if (target.closest('select, textarea, button, .vditor-hint, .msl-table-tools')) return;
 
-    const listItem = getActiveListItem(root, target);
-    if (!listItem) return;
-
+    // Inside the editor content Tab must never shift focus to surrounding UI. We
+    // always consume it and apply either list-level indentation or plain
+    // whitespace indentation depending on the caret context.
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    ensureSelectionInListItem(vditor, listItem);
-    if (runVditorToolbarCommand(vditor, event.shiftKey ? 'outdent' : 'indent')) {
+    const listItem = getActiveListItem(root, target);
+    if (listItem) {
+      ensureSelectionInListItem(vditor, listItem);
+      if (runVditorToolbarCommand(vditor, event.shiftKey ? 'outdent' : 'indent')) {
+        window.setTimeout(afterCommand, 0);
+      }
+      return;
+    }
+
+    const changed = event.shiftKey ? outdentPlainText() : indentPlainText(vditor);
+    if (changed) {
       window.setTimeout(afterCommand, 0);
     }
   };
 
   root.addEventListener('keydown', onKeyDown, true);
   return () => root.removeEventListener('keydown', onKeyDown, true);
+}
+
+const PLAIN_INDENT_UNIT = '\t';
+
+/**
+ * Insert a tab at the caret for non-list contexts so Tab behaves like a normal
+ * editor indent. Multi-character selections are left untouched (we only stop the
+ * focus change) to avoid replacing the selected text.
+ */
+function indentPlainText(vditor: Vditor): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  if (!selection.getRangeAt(0).collapsed) return false;
+  vditor.insertValue(PLAIN_INDENT_UNIT);
+  return true;
+}
+
+/**
+ * Shift+Tab in a non-list context removes one level of leading whitespace in
+ * front of the caret (a single tab, otherwise up to four spaces). The text node
+ * is edited in place; the caller re-reads `vditor.getValue()` afterwards to keep
+ * the markdown in sync.
+ */
+function outdentPlainText(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed) return false;
+  const node = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) return false;
+
+  const textNode = node as Text;
+  const text = textNode.textContent ?? '';
+  const caret = range.startOffset;
+  let remove = 0;
+  if (caret > 0 && text[caret - 1] === '\t') {
+    remove = 1;
+  } else {
+    while (remove < 4 && caret - remove - 1 >= 0 && text[caret - remove - 1] === ' ') {
+      remove += 1;
+    }
+  }
+  if (remove === 0) return false;
+
+  textNode.deleteData(caret - remove, remove);
+  const collapsed = document.createRange();
+  collapsed.setStart(textNode, caret - remove);
+  collapsed.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(collapsed);
+  return true;
 }
 
 function isPlainTabKey(event: KeyboardEvent): boolean {
