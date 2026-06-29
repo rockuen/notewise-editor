@@ -9,3 +9,16 @@ tsup.config.ts
 *.vsix
 **/*.map
 HANDOFF.md
+
+# Heavy vditor renderers we don't bundle: KaTeX is the default math engine, and
+# diagram/chart/sheet libraries go unused in plain notes. Excluding them keeps the
+# VSIX small enough for open-vsx.org to publish reliably (raw markdown is unaffected).
+dist/vditor/dist/js/mathjax/**
+dist/vditor/dist/js/mermaid/**
+dist/vditor/dist/js/graphviz/**
+dist/vditor/dist/js/echarts/**
+dist/vditor/dist/js/markmap/**
+dist/vditor/dist/js/abcjs/**
+dist/vditor/dist/js/smiles-drawer/**
+dist/vditor/dist/js/flowchart.js/**
+dist/vditor/dist/js/plantuml/**
