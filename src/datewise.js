@@ -637,6 +637,8 @@ class CalendarViewProvider {
                         });
                     }
                 });
+            } else if (msg.type === 'renameFile') {
+                this._renameFile(msg.path);
             } else if (msg.type === 'gogLogin') {
                 resetGogStatusCache();
                 const terminal = vscode.window.createTerminal('Google Login');
@@ -659,6 +661,49 @@ class CalendarViewProvider {
             exec(`open '${targetPath.replace(/'/g, "'\\''")}'`);
         } else {
             exec(`xdg-open '${targetPath.replace(/'/g, "'\\''")}'`);
+        }
+    }
+
+    async _renameFile(filePath) {
+        const dirPath = path.dirname(filePath);
+        const oldName = path.basename(filePath);
+        const ext = path.extname(oldName);
+        const baseLen = ext ? oldName.length - ext.length : oldName.length;
+        const input = await vscode.window.showInputBox({
+            title: 'Rename File',
+            prompt: 'Enter a new file name',
+            value: oldName,
+            valueSelection: [0, baseLen],
+            validateInput: (value) => {
+                const trimmed = (value || '').trim();
+                if (!trimmed) return 'File name cannot be empty.';
+                if (/[\\/]/.test(trimmed)) return 'File name cannot contain path separators.';
+                if (/[<>:"|?*\x00-\x1f]/.test(trimmed)) return 'File name contains invalid characters.';
+                if (trimmed === '.' || trimmed === '..') return 'Invalid file name.';
+                return null;
+            },
+        });
+        if (input === undefined) return;
+        let newName = input.trim();
+        if (!newName || newName === oldName) return;
+        if (ext && !path.extname(newName)) newName += ext;
+        const newPath = path.join(dirPath, newName);
+        const newUri = vscode.Uri.file(newPath);
+        const isCaseOnlyChange = newPath !== filePath && newPath.toLowerCase() === filePath.toLowerCase();
+        if (!isCaseOnlyChange) {
+            try {
+                await vscode.workspace.fs.stat(newUri);
+                vscode.window.showErrorMessage(`A file named "${newName}" already exists.`);
+                return;
+            } catch {
+                // target does not exist -> safe to rename
+            }
+        }
+        try {
+            await vscode.workspace.fs.rename(vscode.Uri.file(filePath), newUri, { overwrite: false });
+            this._postMessage('commandSaved', { time: '', label: 'rename', text: newName });
+        } catch (err) {
+            vscode.window.showErrorMessage(`Failed to rename: ${err?.message || String(err)}`);
         }
     }
 
@@ -1205,6 +1250,7 @@ body {
     <div class="ctx-menu-item" data-action="open">\u{1F4C2} Open File</div>
     <div class="ctx-menu-item" data-action="reveal">\u{1F50D} Reveal in Finder</div>
     <div class="ctx-menu-sep"></div>
+    <div class="ctx-menu-item" data-action="rename">\u{270F}\u{FE0F} Rename</div>
     <div class="ctx-menu-item" data-action="copy">\u{1F4CB} Copy Path</div>
     <div class="ctx-menu-sep"></div>
     <div class="ctx-menu-item ctx-menu-danger" data-action="delete">\u{1F5D1} Delete File</div>
@@ -1264,6 +1310,10 @@ window.addEventListener('message', (e) => {
         const d = e.data.data;
         if (d.label === 'copy') {
             showToast('\\u{1F4CB} Copied: ' + d.text);
+        } else if (d.label === 'rename') {
+            showToast('\\u{270F}\\u{FE0F} Renamed: ' + d.text);
+        } else if (d.label === 'delete') {
+            showToast('\\u{1F5D1} Deleted: ' + d.text);
         } else {
             showToast('\\u2713 /' + d.label + ' saved (' + d.time + ')');
         }
@@ -1824,7 +1874,7 @@ document.getElementById('app').addEventListener('contextmenu', (e) => {
         e.preventDefault();
         ctxTargetPath = el.dataset.path;
         const x = Math.min(e.clientX, window.innerWidth - 170);
-        const y = Math.min(e.clientY, window.innerHeight - 100);
+        const y = Math.min(e.clientY, window.innerHeight - 160);
         ctxMenu.style.left = x + 'px';
         ctxMenu.style.top = y + 'px';
         ctxMenu.classList.add('show');
@@ -1843,6 +1893,7 @@ ctxMenu.addEventListener('click', (e) => {
     if (action === 'open') openFile(ctxTargetPath);
     else if (action === 'reveal') vscode.postMessage({ type: 'revealInFinder', path: ctxTargetPath });
     else if (action === 'copy') vscode.postMessage({ type: 'copyPath', path: ctxTargetPath });
+    else if (action === 'rename') vscode.postMessage({ type: 'renameFile', path: ctxTargetPath });
     else if (action === 'delete') vscode.postMessage({ type: 'deleteFile', path: ctxTargetPath });
     ctxMenu.classList.remove('show');
     ctxTargetPath = null;
