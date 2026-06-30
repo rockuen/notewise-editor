@@ -71,6 +71,12 @@ export function createMarkdownEditor(
       },
     },
     theme: settings.palette.mode === 'black' ? 'dark' : 'classic',
+    link: {
+      // Vditor's built-in link opening uses window.open, which is blocked inside the
+      // VS Code webview. Route every click through the host via openExternal instead.
+      isOpen: false,
+      click: (bom: Element | null) => openVditorLink(bom),
+    },
     toolbar: createToolbar(),
     hint: createWikiLinkHint(documentInfo.wikiLinks),
     input(value: string) {
@@ -426,6 +432,17 @@ function escapeHtml(value: string) {
   });
 }
 
+/**
+ * Forward the link Vditor hands to its `link.click` callback to the host.
+ * In IR mode `bom` is the `.vditor-ir__marker--link` span whose text is the URL;
+ * in WYSIWYG/preview mode it is the real `<a>` whose `href` attribute is the URL.
+ */
+function openVditorLink(bom: Element | null) {
+  if (!bom) return;
+  const href = (bom.getAttribute('href') ?? bom.textContent ?? '').trim();
+  if (href) sendOpenLink(href);
+}
+
 function patchLinkOpening(root: HTMLElement) {
   root.addEventListener('mousemove', (event) => {
     const target = wikiLinkTargetFromPoint(event.clientX, event.clientY) ?? wikiLinkFromPoint(event.clientX, event.clientY);
@@ -447,8 +464,13 @@ function patchLinkOpening(root: HTMLElement) {
 
     const anchor = target?.closest('a');
     if (anchor) {
-      event.preventDefault();
-      sendOpenLink(anchor.getAttribute('href') ?? anchor.href);
+      // Vditor's own link.click handler fires first and calls preventDefault. Only
+      // handle anchors it missed (e.g. nested markup in preview mode) so a link that
+      // Vditor already forwarded is not opened a second time.
+      if (!event.defaultPrevented) {
+        event.preventDefault();
+        sendOpenLink(anchor.getAttribute('href') ?? anchor.href);
+      }
       return;
     }
 
