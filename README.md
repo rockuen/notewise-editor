@@ -90,8 +90,8 @@ Open VSX identity:
 
 - Publisher: `rockuen`
 - Extension ID: `rockuen.notewise-editor`
-- Published version: `0.1.26`
-- Current local package: `notewise-editor-0.1.26.vsix`
+- Published version: `0.1.41`
+- Current local package: `notewise-editor-0.1.41.vsix`
 - Listing: https://open-vsx.org/extension/rockuen/notewise-editor
 
 Publish with an Open VSX token stored in `OVSX_PAT`:
@@ -99,7 +99,7 @@ Publish with an Open VSX token stored in `OVSX_PAT`:
 ```powershell
 $env:OVSX_PAT = "<token>"
 npx ovsx verify-pat rockuen -p $env:OVSX_PAT
-npx ovsx publish ".\notewise-editor-0.1.26.vsix" -p $env:OVSX_PAT
+npx ovsx publish ".\notewise-editor-0.1.41.vsix" -p $env:OVSX_PAT
 ```
 
 The token can also be stored with `npx ovsx login rockuen` or provided by a CI secret named `OVSX_PAT`.
@@ -117,3 +117,4 @@ Publish history:
 - 2026-06-20: Prepared v0.1.25 so Tab/Shift+Tab inside list and checklist items always runs NoteWise indent/outdent instead of focus traversal.
 - 2026-06-21: Prepared v0.1.26 to pin the calendar Properties panel to the bottom of the sidebar.
 - 2026-06-21: Published v0.1.26 to Open VSX manually from the local machine after GitHub-hosted publish attempts had returned 503.
+- 2026-06-30: Published v0.1.41 to Open VSX. Fixed external link opening from the IR-mode editor: Vditor IR links render as `<span data-type="a">` (not `<a>`), so the old `closest('a')` handler never matched; now Vditor's `link.click` callback forwards every link (IR/WYSIWYG/preview) to the host `openExternal` path with a double-open guard. The expired `OVSX_PAT` secret was renewed before rerunning the publish workflow (the 503s in the log were noise; the real failure was `Invalid access token`).
