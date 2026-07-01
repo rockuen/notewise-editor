@@ -1,7 +1,7 @@
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import type { ColorRole, DocumentInfo, EditorSettings, WikiLinkCandidate } from '../messages';
-import { sendError, sendInfo, sendOpenLink, sendOpenWikiLink, sendPasteImage } from './sync';
+import { sendError, sendInfo, sendOpenLink, sendOpenWikiLink, sendPasteImage, sendSave } from './sync';
 
 export interface NoteWiseEditorView {
   dom: HTMLElement;
@@ -15,6 +15,7 @@ export interface NoteWiseEditorView {
 let applyingRemoteUpdate = false;
 let chromeStylesInjected = false;
 let currentVditor: Vditor | undefined;
+let currentGetFullValue: (() => string) | undefined;
 let vditorCdnUri = '';
 let wikiLinkDecorationFrame: number | undefined;
 let wikiLinkRanges: WikiLinkRange[] = [];
@@ -108,10 +109,12 @@ export function createMarkdownEditor(
     },
   });
   currentVditor = vditor;
+  const getFullValue = () => joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue());
+  currentGetFullValue = getFullValue;
 
   return {
     dom: parent,
-    getValue: () => joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()),
+    getValue: getFullValue,
     setValue: (next) => {
       const split = splitYamlFrontmatter(next);
       if (visibleDocument.frontmatter === split.frontmatter && vditor.getValue() === split.body) return;
@@ -129,6 +132,7 @@ export function createMarkdownEditor(
     focus: () => vditor.focus(),
     destroy: () => {
       if (currentVditor === vditor) currentVditor = undefined;
+      if (currentGetFullValue === getFullValue) currentGetFullValue = undefined;
       detachTabIndentHandling?.();
       detachTabIndentHandling = undefined;
       clearWikiLinkDecorations();
@@ -187,6 +191,18 @@ function createToolbar(): any[] {
   });
 
   return [
+    {
+      name: 'save',
+      tipPosition: 's',
+      tip: TOOLTIP_LABELS['save'],
+      icon: TOOLBAR_ICONS['save'],
+      click() {
+        const content = currentGetFullValue?.();
+        if (content === undefined) return;
+        sendSave(content);
+      },
+    },
+    '|',
     tool('link'),
     {
       name: 'wiki-link',
@@ -266,6 +282,7 @@ function icon(name: string): string {
 }
 
 const TOOLBAR_ICONS: Record<string, string> = {
+  save: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>`,
   link: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"></path></svg>`,
   'wiki-link': `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5H4v14h3"></path><path d="M17 5h3v14h-3"></path><path d="M10 13a4 4 0 0 0 5.7 0l.8-.8a4 4 0 0 0-5.7-5.7l-.5.5"></path><path d="M14 11a4 4 0 0 0-5.7 0l-.8.8a4 4 0 0 0 5.7 5.7l.5-.5"></path></svg>`,
   list: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3.5 6h.01"></path><path d="M3.5 12h.01"></path><path d="M3.5 18h.01"></path></svg>`,
@@ -294,6 +311,7 @@ const TOOLBAR_ICONS: Record<string, string> = {
 };
 
 const TOOLTIP_LABELS: Record<string, string> = {
+  save: 'Save',
   link: 'Link',
   'wiki-link': 'Internal note link',
   list: 'Bullet list',
