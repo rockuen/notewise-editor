@@ -14,8 +14,8 @@ const BLACK_HEADING_COLORS = ['#ff7af2', '#ffcc3d', '#22d3ee', '#8bd450', '#c4b5
 const BLACK_LIST_COLORS = ['#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f', '#9b968f'];
 const BLACK_QUOTE_COLORS = ['#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e', '#8f949e'];
 const WHITE_HEADING_COLORS = ['#b0009f', '#9b6500', '#007d91', '#4f7d00', '#6d55b8', '#995f00'];
-const WHITE_LIST_COLORS = ['#a39888', '#a39888', '#a39888', '#a39888', '#a39888', '#a39888'];
-const WHITE_QUOTE_COLORS = ['#6f7782', '#6f7782', '#6f7782', '#6f7782', '#6f7782', '#6f7782'];
+const WHITE_LIST_COLORS = ['#4a4540', '#4a4540', '#4a4540', '#4a4540', '#4a4540', '#4a4540'];
+const WHITE_QUOTE_COLORS = ['#4d5560', '#4d5560', '#4d5560', '#4d5560', '#4d5560', '#4d5560'];
 
 export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvider {
   private readonly panels = new Set<vscode.WebviewPanel>();
@@ -514,19 +514,19 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     const config = vscode.workspace.getConfiguration('noteWise.editor');
     const mode = this.getThemeMode();
     const isBlack = mode === 'black';
-    const background = config.get<string>(`theme.${mode}.background`, '#1b1b1d');
-    const foreground = config.get<string>(`theme.${mode}.foreground`, '#cccfd6');
-    const mutedForeground = config.get<string>(`theme.${mode}.mutedForeground`, '#717784');
+    const background = config.get<string>(`theme.${mode}.background`, isBlack ? '#1b1b1d' : '#ffffff');
+    const foreground = config.get<string>(`theme.${mode}.foreground`, isBlack ? '#cccfd6' : '#1f2328');
+    const mutedForeground = config.get<string>(`theme.${mode}.mutedForeground`, isBlack ? '#717784' : '#57606a');
 
     return {
       mode,
       background,
       foreground,
       mutedForeground,
-      activeLine: '#222327',
+      activeLine: isBlack ? '#222327' : '#f3f4f6',
       gutterBackground: background,
-      gutterForeground: '#4b4f59',
-      selectionBackground: '#34415e80',
+      gutterForeground: isBlack ? '#4b4f59' : '#9aa0a6',
+      selectionBackground: isBlack ? '#34415e80' : '#b7d3f780',
       cursor: isBlack ? '#ff7a6d' : '#c0392b',
     };
   }

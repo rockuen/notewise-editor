@@ -1167,20 +1167,20 @@ export function injectChromeStyles() {
   --msl-soft-border: rgba(255,255,255,0.075);
 }
 :root[data-msl-theme="white"] {
-  color-scheme: dark;
-  --msl-shell-bg: var(--vscode-editor-background, #101112);
-  --msl-card-bg: var(--vscode-editor-background, var(--msl-doc-bg, #1b1b1d));
-  --msl-doc-surface: color-mix(in srgb, var(--msl-card-bg) 94%, white 6%);
-  --msl-doc-rule: rgba(255,255,255,0.11);
-  --msl-doc-rule-soft: rgba(255,255,255,0.07);
-  --msl-doc-table-header: rgba(255,255,255,0.045);
-  --msl-doc-table-hover: rgba(255,255,255,0.035);
+  color-scheme: light;
+  --msl-shell-bg: var(--vscode-editor-background, #f3f3f1);
+  --msl-card-bg: var(--vscode-editor-background, var(--msl-doc-bg, #ffffff));
+  --msl-doc-surface: color-mix(in srgb, var(--msl-card-bg) 96%, black 4%);
+  --msl-doc-rule: rgba(0,0,0,0.14);
+  --msl-doc-rule-soft: rgba(0,0,0,0.08);
+  --msl-doc-table-header: rgba(0,0,0,0.045);
+  --msl-doc-table-hover: rgba(0,0,0,0.03);
   --msl-link-color: #b84d36;
   --msl-link-hover: #8f3428;
-  --msl-topbar-bg: #252527;
-  --msl-menu-bg: #252527;
-  --msl-border: rgba(255,255,255,0.105);
-  --msl-soft-border: rgba(255,255,255,0.075);
+  --msl-topbar-bg: #f6f6f4;
+  --msl-menu-bg: #ffffff;
+  --msl-border: rgba(0,0,0,0.12);
+  --msl-soft-border: rgba(0,0,0,0.08);
 }
 html, body {
   margin: 0;
@@ -1206,6 +1206,12 @@ body {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(0,0,0,0.28);
+}
+:root[data-msl-theme="white"] .msl-card {
+  box-shadow: 0 10px 30px rgba(0,0,0,0.10);
+}
+:root[data-msl-theme="white"] .msl-menu {
+  box-shadow: 0 16px 40px rgba(0,0,0,0.14);
 }
 .msl-topbar {
   display: flex;
