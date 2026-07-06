@@ -1038,7 +1038,9 @@ class CalendarViewProvider {
 <style>
 :root {
     --bg: var(--vscode-sideBar-background, #1e1e2e);
-    --fg: var(--vscode-sideBar-foreground, #cdd6f4);
+    /* sideBar.foreground has no default in the VS Code color registry, so the
+       variable is missing under most themes — always chain to --vscode-foreground. */
+    --fg: var(--vscode-sideBar-foreground, var(--vscode-foreground, #cdd6f4));
     --accent: var(--vscode-focusBorder, #89b4fa);
     --hover: var(--vscode-list-hoverBackground, #313244);
     --today-bg: var(--vscode-badge-background, #89b4fa);
@@ -1053,6 +1055,21 @@ class CalendarViewProvider {
     --sun: #f38ba8;
     --sat: #89b4fa;
 }
+/* The pastel accents above are tuned for dark themes and wash out on light
+   backgrounds — swap them for saturated equivalents under light themes. */
+body.vscode-light, body.vscode-high-contrast-light {
+    --dot-notes: #1e66f5;
+    --dot-data: #40a02b;
+    --dot-images: #df8e1d;
+    --dot-others: #6c6f85;
+    --dot-event: #d64bab;
+    --sun: #d20f39;
+    --sat: #1e66f5;
+}
+body.vscode-light .ctx-menu-danger, body.vscode-high-contrast-light .ctx-menu-danger { color: #d20f39; }
+body.vscode-light .ctx-menu-danger:hover, body.vscode-high-contrast-light .ctx-menu-danger:hover { background: rgba(210,15,57,0.1); }
+body.vscode-light .auth-error, body.vscode-light .gog-status-msg,
+body.vscode-high-contrast-light .auth-error, body.vscode-high-contrast-light .gog-status-msg { background: rgba(0,0,0,0.045); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
