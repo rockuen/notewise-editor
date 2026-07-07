@@ -157,6 +157,10 @@ export function applyEditorSettings(_view: NoteWiseEditorView, settings: EditorS
   if (vditorRoot) {
     vditorRoot.classList.toggle('vditor--dark', settings.palette.mode === 'black');
   }
+  // The vditor content theme is only chosen at init, so a runtime palette change
+  // would leave the stale content-theme stylesheet (e.g. dark tables) loaded.
+  const isBlack = settings.palette.mode === 'black';
+  currentVditor?.setTheme(isBlack ? 'dark' : 'classic', isBlack ? 'dark' : 'light');
 }
 
 /** Applies a single color to its CSS variable immediately, for live preview before the host persists it. */
@@ -1609,6 +1613,13 @@ body {
   border: 1px solid var(--msl-doc-rule) !important;
   border-radius: 9px;
   font-size: .95em;
+}
+/* Vditor's content-theme stylesheet (e.g. dark.css) paints row backgrounds; if it
+   gets out of sync with the palette the table turns dark on a light page. The
+   extension owns table chrome, so pin row backgrounds to the card regardless. */
+.vditor-reset table tr,
+.vditor-reset table tbody tr:nth-child(2n) {
+  background: transparent !important;
 }
 .vditor-reset th,
 .vditor-reset td {
