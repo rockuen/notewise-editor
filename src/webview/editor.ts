@@ -1606,10 +1606,15 @@ body {
   color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
 }
 .vditor-reset table {
-  width: 100%;
+  /* Vditor turns tables into display:block for scrollability, so cells keep their
+     intrinsic width while width:100% would stretch only the border box — size the
+     box to its content instead, and scroll inside it when wider than the page. */
+  width: max-content !important;
+  max-width: 100% !important;
   border-collapse: separate !important;
   border-spacing: 0 !important;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--msl-doc-rule) !important;
   border-radius: 9px;
   font-size: .95em;
