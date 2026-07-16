@@ -18,6 +18,7 @@ let currentVditor: Vditor | undefined;
 let currentGetFullValue: (() => string) | undefined;
 let vditorCdnUri = '';
 let resourceBaseUri = '';
+let imagePreviewClosePatched = false;
 let wikiLinkDecorationFrame: number | undefined;
 let wikiLinkRanges: WikiLinkRange[] = [];
 
@@ -44,6 +45,7 @@ export function createMarkdownEditor(
 ): NoteWiseEditorView {
   applyCssVariables(settings);
   scheduleHeadingPresentation(parent);
+  patchImagePreviewClose();
   resourceBaseUri = documentInfo.resourceBaseUri ?? '';
   let visibleDocument = splitYamlFrontmatter(content);
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
@@ -91,6 +93,7 @@ export function createMarkdownEditor(
       if (applyingRemoteUpdate) return;
       scheduleWikiLinkDecorations(parent);
       scheduleHeadingPresentation(parent);
+      scheduleImageWidthPresentation(parent);
       onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, value));
     },
     upload: {
@@ -112,10 +115,15 @@ export function createMarkdownEditor(
       });
       scheduleWikiLinkDecorations(parent);
       scheduleHeadingPresentation(parent);
+      scheduleImageWidthPresentation(parent);
       vditor.focus();
     },
   });
   currentVditor = vditor;
+  const detachImageResize = attachImageResizeHandling(parent, () => {
+    if (applyingRemoteUpdate) return;
+    onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
+  });
   const getFullValue = () => joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue());
   currentGetFullValue = getFullValue;
 
@@ -131,6 +139,7 @@ export function createMarkdownEditor(
         vditor.setValue(split.body);
         scheduleWikiLinkDecorations(parent);
         scheduleHeadingPresentation(parent);
+        scheduleImageWidthPresentation(parent);
       } finally {
         applyingRemoteUpdate = false;
       }
@@ -142,6 +151,7 @@ export function createMarkdownEditor(
       if (currentGetFullValue === getFullValue) currentGetFullValue = undefined;
       detachTabIndentHandling?.();
       detachTabIndentHandling = undefined;
+      detachImageResize();
       clearWikiLinkDecorations();
       vditor.destroy();
     },
@@ -155,6 +165,7 @@ export function updateEditorContent(view: NoteWiseEditorView, content: string) {
 export function insertEditorText(view: NoteWiseEditorView, text: string) {
   view.insertValue(text);
   view.focus();
+  scheduleImageWidthPresentation(view.dom);
 }
 
 export function applyEditorSettings(_view: NoteWiseEditorView, settings: EditorSettings) {
@@ -479,6 +490,123 @@ function openVditorLink(bom: Element | null) {
 function stripResourceBase(href: string): string {
   if (resourceBaseUri && href.startsWith(resourceBaseUri)) return href.slice(resourceBaseUri.length);
   return href;
+}
+
+const IMAGE_RESIZE_MIN_WIDTH = 48;
+const IMAGE_RESIZE_MAX_WIDTH = 3200;
+const IMAGE_RESIZE_FACTOR = 1.1;
+
+/**
+ * Vditor's image-preview overlay closes itself through an inline onclick
+ * attribute, which the webview CSP blocks (the rotate button survives because
+ * it uses addEventListener). Close the overlay with delegated listeners instead.
+ */
+function patchImagePreviewClose() {
+  if (imagePreviewClosePatched) return;
+  imagePreviewClosePatched = true;
+
+  const closePreview = (): boolean => {
+    const overlay = document.querySelector('.vditor-img');
+    if (!overlay) return false;
+    overlay.remove();
+    document.body.style.overflow = '';
+    return true;
+  };
+
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest('.vditor-img__btn');
+    if (!button || button.hasAttribute('data-deg')) return;
+    closePreview();
+  });
+
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'Escape') return;
+      if (closePreview()) event.stopPropagation();
+    },
+    true
+  );
+}
+
+/**
+ * Ctrl+wheel over an image scales it proportionally. The width persists as an
+ * Obsidian-compatible `![alt|width](src)` suffix so it round-trips through the
+ * markdown document; applyImageWidths re-applies it after every re-render.
+ */
+function attachImageResizeHandling(root: HTMLElement, onResized: () => void): () => void {
+  const onWheel = (event: WheelEvent) => {
+    if (!event.ctrlKey || event.deltaY === 0) return;
+    const img = event.target instanceof HTMLImageElement ? event.target : null;
+    if (!img) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const factor = event.deltaY < 0 ? IMAGE_RESIZE_FACTOR : 1 / IMAGE_RESIZE_FACTOR;
+    const current = img.getBoundingClientRect().width || img.naturalWidth || IMAGE_RESIZE_MIN_WIDTH;
+    const width = Math.round(clampImageWidth(current * factor));
+    img.style.width = `${width}px`;
+    if (persistImageWidth(img, width)) onResized();
+  };
+
+  root.addEventListener('wheel', onWheel, { passive: false, capture: true });
+  return () => root.removeEventListener('wheel', onWheel, { capture: true });
+}
+
+function clampImageWidth(width: number): number {
+  return Math.min(IMAGE_RESIZE_MAX_WIDTH, Math.max(IMAGE_RESIZE_MIN_WIDTH, width));
+}
+
+/**
+ * Writes the width into the IR alt marker (`![alt|width](src)`) — in IR mode the
+ * marker text is what getValue() serializes, so this is the durable edit.
+ */
+function persistImageWidth(img: HTMLImageElement, width: number): boolean {
+  const node = img.closest('[data-type="img"]');
+  if (!node) return false;
+
+  const brackets = node.querySelectorAll<HTMLElement>(':scope > .vditor-ir__marker--bracket');
+  let altMarker: HTMLElement;
+  if (brackets.length === 3) {
+    altMarker = brackets[1];
+  } else if (brackets.length === 2) {
+    // `![](src)` renders no alt marker between the brackets; create one.
+    altMarker = document.createElement('span');
+    altMarker.className = 'vditor-ir__marker vditor-ir__marker--bracket';
+    brackets[1].before(altMarker);
+  } else {
+    return false;
+  }
+
+  const baseAlt = (altMarker.textContent ?? '').replace(/\|\d+\s*$/, '');
+  const nextAlt = `${baseAlt}|${width}`;
+  altMarker.textContent = nextAlt;
+  img.setAttribute('alt', nextAlt);
+  img.dataset.mslSized = 'true';
+  return true;
+}
+
+function scheduleImageWidthPresentation(root: ParentNode) {
+  const run = () => applyImageWidths(root);
+  requestAnimationFrame(run);
+  setTimeout(run, 60);
+  setTimeout(run, 180);
+}
+
+/** Re-applies `![alt|width](src)` widths, which re-renders drop from the DOM. */
+function applyImageWidths(root: ParentNode) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
+    const match = /\|(\d+)\s*$/.exec(img.getAttribute('alt') ?? '');
+    if (match) {
+      img.style.width = `${clampImageWidth(Number(match[1]))}px`;
+      img.dataset.mslSized = 'true';
+    } else if (img.dataset.mslSized) {
+      img.style.width = '';
+      delete img.dataset.mslSized;
+    }
+  });
 }
 
 function patchLinkOpening(root: HTMLElement) {
