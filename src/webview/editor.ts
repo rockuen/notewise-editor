@@ -17,6 +17,7 @@ let chromeStylesInjected = false;
 let currentVditor: Vditor | undefined;
 let currentGetFullValue: (() => string) | undefined;
 let vditorCdnUri = '';
+let resourceBaseUri = '';
 let wikiLinkDecorationFrame: number | undefined;
 let wikiLinkRanges: WikiLinkRange[] = [];
 
@@ -43,6 +44,7 @@ export function createMarkdownEditor(
 ): NoteWiseEditorView {
   applyCssVariables(settings);
   scheduleHeadingPresentation(parent);
+  resourceBaseUri = documentInfo.resourceBaseUri ?? '';
   let visibleDocument = splitYamlFrontmatter(content);
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
@@ -63,6 +65,11 @@ export function createMarkdownEditor(
     preview: {
       math: {
         inlineDigit: true,
+      },
+      markdown: {
+        // The webview origin cannot serve files from disk, so relative image and
+        // link targets must be prefixed with the document folder's webview URI.
+        linkBase: documentInfo.resourceBaseUri ?? '',
       },
       parse(element: HTMLElement) {
         decorateWikiLinks(element);
@@ -461,8 +468,17 @@ function escapeHtml(value: string) {
  */
 function openVditorLink(bom: Element | null) {
   if (!bom) return;
-  const href = (bom.getAttribute('href') ?? bom.textContent ?? '').trim();
+  const href = stripResourceBase((bom.getAttribute('href') ?? bom.textContent ?? '').trim());
   if (href) sendOpenLink(href);
+}
+
+/**
+ * Rendered anchors carry the document-folder base URI prefixed by `linkBase`;
+ * strip it again so the host resolves the raw markdown target as before.
+ */
+function stripResourceBase(href: string): string {
+  if (resourceBaseUri && href.startsWith(resourceBaseUri)) return href.slice(resourceBaseUri.length);
+  return href;
 }
 
 function patchLinkOpening(root: HTMLElement) {
@@ -491,7 +507,7 @@ function patchLinkOpening(root: HTMLElement) {
       // Vditor already forwarded is not opened a second time.
       if (!event.defaultPrevented) {
         event.preventDefault();
-        sendOpenLink(anchor.getAttribute('href') ?? anchor.href);
+        sendOpenLink(stripResourceBase(anchor.getAttribute('href') ?? anchor.href));
       }
       return;
     }
