@@ -32,6 +32,8 @@ The default editor switch keybinding is `Ctrl+K Y` or `Cmd+K Y`.
 The default open keybinding is `Ctrl+Shift+Alt+M` or `Cmd+Shift+Alt+M`.
 The default calendar focus keybinding is `Ctrl+Shift+B` or `Cmd+Shift+B`.
 
+Inside the editor, `Alt+1` through `Alt+5` set the current line to a heading — `Alt+1` → H2, `Alt+2` → H3, `Alt+3` → H4, `Alt+4` → H5, `Alt+5` → H6. These are handled inside the editor and take priority over any conflicting VS Code keybinding.
+
 ## File Icon Theme
 
 To use the NoteWise image for Markdown files, run `Preferences: File Icon Theme` and select `NoteWise Markdown File Icons`.

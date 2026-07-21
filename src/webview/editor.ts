@@ -52,6 +52,7 @@ export function createMarkdownEditor(
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
   if (!host) throw new Error('Missing Vditor host.');
   let detachTabIndentHandling: (() => void) | undefined;
+  let detachHeadingHotkeys: (() => void) | undefined;
 
   const vditor = new Vditor(host, {
     width: '100%',
@@ -113,6 +114,12 @@ export function createMarkdownEditor(
         scheduleWikiLinkDecorations(parent);
         onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
       });
+      detachHeadingHotkeys?.();
+      detachHeadingHotkeys = patchHeadingHotkeys(parent, () => {
+        scheduleHeadingPresentation(parent);
+        scheduleWikiLinkDecorations(parent);
+        onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
+      });
       scheduleWikiLinkDecorations(parent);
       scheduleHeadingPresentation(parent);
       scheduleImageWidthPresentation(parent);
@@ -151,6 +158,8 @@ export function createMarkdownEditor(
       if (currentGetFullValue === getFullValue) currentGetFullValue = undefined;
       detachTabIndentHandling?.();
       detachTabIndentHandling = undefined;
+      detachHeadingHotkeys?.();
+      detachHeadingHotkeys = undefined;
       detachImageResize();
       clearWikiLinkDecorations();
       vditor.destroy();
@@ -747,6 +756,109 @@ function patchTabIndentHandling(root: HTMLElement, vditor: Vditor, afterCommand:
 
   root.addEventListener('keydown', onKeyDown, true);
   return () => root.removeEventListener('keydown', onKeyDown, true);
+}
+
+// Alt+1..Alt+5 map the current block to a heading level (H2..H6). We deliberately
+// offset by one — Alt+1 is H2, not H1 — because H1 is reserved for the note title.
+const HEADING_HOTKEY_LEVELS: Record<string, number> = {
+  Digit1: 2,
+  Numpad1: 2,
+  Digit2: 3,
+  Numpad2: 3,
+  Digit3: 4,
+  Numpad3: 4,
+  Digit4: 5,
+  Numpad4: 5,
+  Digit5: 6,
+  Numpad5: 6,
+};
+
+const HEADING_BLOCK_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'BLOCKQUOTE', 'OL', 'UL']);
+
+/**
+ * Alt+1..Alt+5 set the caret's block to a heading (H2..H6). The listener runs in
+ * the capture phase and consumes the event (preventDefault + stopPropagation), so
+ * it wins over any VS Code keybinding bound to the same chord — the same technique
+ * the Tab indent handler relies on. `event.code` is matched (not `event.key`) so
+ * the mapping is keyboard-layout independent even when Alt mutates the character.
+ */
+function patchHeadingHotkeys(root: HTMLElement, afterCommand: () => void): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const level = HEADING_HOTKEY_LEVELS[event.code];
+    if (!level) return;
+
+    const target = event.target as Element | null;
+    if (!target || !root.contains(target)) return;
+    const editorEl = target.closest<HTMLElement>('.vditor-ir');
+    if (!editorEl) return;
+    // Leave hints, table tools, and real form controls alone.
+    if (target.closest('.vditor-hint, .msl-table-tools, input, textarea, select, button')) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (applyHeadingLevel(editorEl, level)) {
+      window.setTimeout(afterCommand, 0);
+    }
+  };
+
+  root.addEventListener('keydown', onKeyDown, true);
+  return () => root.removeEventListener('keydown', onKeyDown, true);
+}
+
+/**
+ * Replicates vditor's IR `processHeading` for a fixed level: either rewrite the
+ * existing heading marker or prepend a new one to the current block, then let
+ * vditor reconcile the raw "## " text into a real heading via a native input
+ * event (the exact path typing "## " takes). Returns false when nothing changed.
+ */
+function applyHeadingLevel(editorEl: HTMLElement, level: number): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0);
+  if (!editorEl.contains(range.startContainer)) return false;
+
+  const block = closestIrBlock(range.startContainer, editorEl);
+  if (!block) return false;
+
+  const value = `${'#'.repeat(level)} `;
+  const marker = block.querySelector<HTMLElement>('.vditor-ir__marker--heading');
+  if (marker) {
+    const currentLevel = (marker.textContent ?? '').replace(/[^#]/g, '').length;
+    if (currentLevel === level) return false; // already at this level — nothing to do
+    marker.innerHTML = value;
+  } else {
+    block.insertAdjacentText('afterbegin', value);
+    const collapsed = document.createRange();
+    collapsed.selectNodeContents(block);
+    collapsed.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(collapsed);
+  }
+
+  // vditor binds its IR reconciler to the contenteditable host; dispatch from the
+  // edited block so the event bubbles up to that listener (the path typing takes).
+  block.dispatchEvent(
+    new InputEvent('input', { inputType: 'insertText', data: ' ', bubbles: true, cancelable: false })
+  );
+  return true;
+}
+
+/** Closest IR block element for a node, mirroring vditor's `hasClosestBlock`. */
+function closestIrBlock(node: Node, editorEl: HTMLElement): HTMLElement | undefined {
+  let el: HTMLElement | null =
+    node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+
+  const dataBlock = el?.closest<HTMLElement>('[data-block="0"]');
+  if (dataBlock && editorEl.contains(dataBlock)) return dataBlock;
+
+  while (el && !el.classList.contains('vditor-reset')) {
+    if (HEADING_BLOCK_TAGS.has(el.tagName)) return editorEl.contains(el) ? el : undefined;
+    el = el.parentElement;
+  }
+  return undefined;
 }
 
 const PLAIN_INDENT_UNIT = '\t';
