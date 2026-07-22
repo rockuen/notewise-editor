@@ -841,13 +841,134 @@ function patchInlineFormatHotkeys(root: HTMLElement, vditor: Vditor, afterComman
     event.stopPropagation();
     event.stopImmediatePropagation();
 
+    // A second Ctrl+B on the empty `**|**` pair a collapsed-caret bold leaves
+    // behind should cancel it, not nest another pair inside.
+    if (cancelEmptyBoldMarkers()) {
+      window.setTimeout(afterCommand, 0);
+      return;
+    }
+
     if (runVditorToolbarCommand(vditor, 'bold')) {
       window.setTimeout(afterCommand, 0);
     }
   };
 
+  // vditor only *removes* bold when the toolbar button carries the
+  // `vditor-menu--current` highlight, but it refreshes that highlight on editor
+  // keyup/click — never right before a toolbar action — so bold-then-bold-again
+  // sees stale state and re-wraps instead of toggling off. Re-derive the
+  // highlight from the live selection in the capture phase, before the button's
+  // own click handler (ours is on an ancestor, so it runs first even for the
+  // synthetic click the hotkey dispatches).
+  const onToolbarClick = (event: MouseEvent) => {
+    const target = event.target as Element | null;
+    if (!target?.closest('.vditor-toolbar [data-type="bold"]')) return;
+    syncBoldButtonFromSelection(vditor);
+  };
+
   root.addEventListener('keydown', onKeyDown, true);
-  return () => root.removeEventListener('keydown', onKeyDown, true);
+  // The toolbar gets docked into the topbar outside `root` (dockVditorToolbar),
+  // so the click listener must sit on document to see toolbar buttons at all.
+  document.addEventListener('click', onToolbarClick, true);
+  return () => {
+    root.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('click', onToolbarClick, true);
+  };
+}
+
+/**
+ * Mirrors vditor's `highlightToolbarIR` bold detection (closest ancestor with
+ * `data-type="strong"` from the selection start) and stamps the result onto the
+ * bold button, so the follow-up click takes vditor's remove path when the caret
+ * is inside bold text. Selections outside the editor leave the button untouched.
+ */
+function syncBoldButtonFromSelection(vditor: Vditor): void {
+  const item = getInternalVditor(vditor)?.toolbar?.elements?.bold;
+  const button = item?.firstElementChild as HTMLElement | null | undefined;
+  if (!button) return;
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return;
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+  const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element);
+  if (!el || !el.closest('.vditor-ir')) return;
+
+  let strongSpan = el.closest('[data-type="strong"]');
+
+  // After wrapping a selection, vditor parks the caret just past the closing
+  // `**`, *outside* the strong span, so a plain ancestor check misses it. Treat
+  // that adjacent position as bold context and move the caret inside the span,
+  // where vditor's removeInline can find it.
+  if (!strongSpan && range.collapsed) {
+    const before = nodeJustBeforeCaret(range);
+    if (before instanceof Element && before.matches('[data-type="strong"]')) {
+      strongSpan = before;
+      const inner = before.querySelector('strong') ?? before;
+      const moved = document.createRange();
+      moved.selectNodeContents(inner);
+      moved.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(moved);
+    }
+  }
+
+  button.classList.toggle('vditor-menu--current', !!strongSpan);
+}
+
+/** The sibling node immediately left of a collapsed caret, if the caret sits on a node boundary. */
+function nodeJustBeforeCaret(range: Range): Node | null {
+  const node = range.startContainer;
+  if (node.nodeType === Node.TEXT_NODE) {
+    return range.startOffset === 0 ? node.previousSibling : null;
+  }
+  return range.startOffset > 0 ? (node.childNodes[range.startOffset - 1] ?? null) : null;
+}
+
+/**
+ * A collapsed-caret bold leaves the raw pair `**|**` in a plain text node (an
+ * empty bold is not valid markdown, so vditor never renders a strong span for
+ * it). When the caret still sits between the pairs, remove both instead of
+ * delegating to vditor, which would nest a fresh pair inside. The closing pair
+ * may live in the same text node or spill into the next one.
+ */
+function cancelEmptyBoldMarkers(): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed) return false;
+  const node = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) return false;
+
+  const text = node as Text;
+  const offset = range.startOffset;
+  if ((text.textContent ?? '').slice(Math.max(0, offset - 2), offset) !== '**') return false;
+
+  const sameNodeAfter = (text.textContent ?? '').slice(offset, offset + 2);
+  if (sameNodeAfter === '**') {
+    text.deleteData(offset - 2, 4);
+  } else if (sameNodeAfter === '') {
+    // The reconcile pass can leave empty text nodes between the pairs (wbr
+    // removal debris) — skip them before looking for the closing `**`.
+    let next: Node | null = text.nextSibling;
+    while (next && next.nodeType === Node.TEXT_NODE && (next.textContent ?? '') === '') {
+      next = next.nextSibling;
+    }
+    if (!next || next.nodeType !== Node.TEXT_NODE || !(next.textContent ?? '').startsWith('**')) {
+      return false;
+    }
+    (next as Text).deleteData(0, 2);
+    text.deleteData(offset - 2, 2);
+  } else {
+    return false;
+  }
+
+  const collapsed = document.createRange();
+  collapsed.setStart(text, offset - 2);
+  collapsed.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(collapsed);
+  return true;
 }
 
 /**
