@@ -53,6 +53,7 @@ export function createMarkdownEditor(
   if (!host) throw new Error('Missing Vditor host.');
   let detachTabIndentHandling: (() => void) | undefined;
   let detachHeadingHotkeys: (() => void) | undefined;
+  let detachInlineFormatHotkeys: (() => void) | undefined;
 
   const vditor = new Vditor(host, {
     width: '100%',
@@ -120,6 +121,11 @@ export function createMarkdownEditor(
         scheduleWikiLinkDecorations(parent);
         onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
       });
+      detachInlineFormatHotkeys?.();
+      detachInlineFormatHotkeys = patchInlineFormatHotkeys(parent, vditor, () => {
+        scheduleWikiLinkDecorations(parent);
+        onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
+      });
       scheduleWikiLinkDecorations(parent);
       scheduleHeadingPresentation(parent);
       scheduleImageWidthPresentation(parent);
@@ -160,6 +166,8 @@ export function createMarkdownEditor(
       detachTabIndentHandling = undefined;
       detachHeadingHotkeys?.();
       detachHeadingHotkeys = undefined;
+      detachInlineFormatHotkeys?.();
+      detachInlineFormatHotkeys = undefined;
       detachImageResize();
       clearWikiLinkDecorations();
       vditor.destroy();
@@ -234,6 +242,7 @@ function createToolbar(): any[] {
       },
     },
     '|',
+    tool('bold'),
     tool('link'),
     {
       name: 'wiki-link',
@@ -314,6 +323,7 @@ function icon(name: string): string {
 
 const TOOLBAR_ICONS: Record<string, string> = {
   save: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>`,
+  bold: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path></svg>`,
   link: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"></path></svg>`,
   'wiki-link': `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5H4v14h3"></path><path d="M17 5h3v14h-3"></path><path d="M10 13a4 4 0 0 0 5.7 0l.8-.8a4 4 0 0 0-5.7-5.7l-.5.5"></path><path d="M14 11a4 4 0 0 0-5.7 0l-.8.8a4 4 0 0 0 5.7 5.7l.5-.5"></path></svg>`,
   list: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3.5 6h.01"></path><path d="M3.5 12h.01"></path><path d="M3.5 18h.01"></path></svg>`,
@@ -343,6 +353,7 @@ const TOOLBAR_ICONS: Record<string, string> = {
 
 const TOOLTIP_LABELS: Record<string, string> = {
   save: 'Save',
+  bold: /Mac|iP(hone|ad|od)/.test(navigator.platform) ? 'Bold (⌘B)' : 'Bold (Ctrl+B)',
   link: 'Link',
   'wiki-link': 'Internal note link',
   list: 'Bullet list',
@@ -809,6 +820,37 @@ function patchHeadingHotkeys(root: HTMLElement, afterCommand: () => void): () =>
 }
 
 /**
+ * Ctrl/Cmd+B toggles bold on the caret or selection. VS Code owns this chord for
+ * its own sidebar toggle, so the listener runs in the capture phase and consumes
+ * the event before the keybinding service can see it — the same technique the Tab
+ * and heading handlers use. The toolbar button carries vditor's bold logic, so the
+ * hotkey reuses it via a synthetic click instead of re-implementing the toggle.
+ */
+function patchInlineFormatHotkeys(root: HTMLElement, vditor: Vditor, afterCommand: () => void): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+    if (event.code !== 'KeyB') return;
+
+    const target = event.target as Element | null;
+    if (!target || !root.contains(target)) return;
+    if (!target.closest('.vditor-ir')) return;
+    // Leave hints, table tools, and real form controls alone.
+    if (target.closest('.vditor-hint, .msl-table-tools, input, textarea, select, button')) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (runVditorToolbarCommand(vditor, 'bold')) {
+      window.setTimeout(afterCommand, 0);
+    }
+  };
+
+  root.addEventListener('keydown', onKeyDown, true);
+  return () => root.removeEventListener('keydown', onKeyDown, true);
+}
+
+/**
  * Replicates vditor's IR `processHeading` for a fixed level: either rewrite the
  * existing heading marker or prepend a new one to the current block, then let
  * vditor reconcile the raw "## " text into a real heading via a native input
@@ -972,7 +1014,7 @@ function firstTextNode(root: HTMLElement): Text | undefined {
   return walker.nextNode() as Text | null ?? undefined;
 }
 
-function runVditorToolbarCommand(vditor: Vditor, command: 'indent' | 'outdent'): boolean {
+function runVditorToolbarCommand(vditor: Vditor, command: 'indent' | 'outdent' | 'bold'): boolean {
   const item = getInternalVditor(vditor)?.toolbar?.elements?.[command];
   const button = item?.firstElementChild as HTMLElement | null | undefined;
   if (!button || button.classList.contains('vditor-menu--disabled')) return false;
