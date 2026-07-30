@@ -54,6 +54,7 @@ export function createMarkdownEditor(
   let detachTabIndentHandling: (() => void) | undefined;
   let detachHeadingHotkeys: (() => void) | undefined;
   let detachInlineFormatHotkeys: (() => void) | undefined;
+  let detachFindBar: (() => void) | undefined;
 
   const vditor = new Vditor(host, {
     width: '100%',
@@ -109,7 +110,14 @@ export function createMarkdownEditor(
       patchLinkOpening(parent);
       patchCodeBlockCopy(parent);
       dockVditorToolbar(parent);
-      mountTableTools(parent, () => vditor.getValue());
+      mountTableTools(parent, () => vditor.getValue(), () => {
+        scheduleWikiLinkDecorations(parent);
+        scheduleHeadingPresentation(parent);
+        scheduleImageWidthPresentation(parent);
+        onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
+      });
+      detachFindBar?.();
+      detachFindBar = mountFindBar(parent);
       detachTabIndentHandling?.();
       detachTabIndentHandling = patchTabIndentHandling(parent, vditor, () => {
         scheduleWikiLinkDecorations(parent);
@@ -168,6 +176,8 @@ export function createMarkdownEditor(
       detachHeadingHotkeys = undefined;
       detachInlineFormatHotkeys?.();
       detachInlineFormatHotkeys = undefined;
+      detachFindBar?.();
+      detachFindBar = undefined;
       detachImageResize();
       clearWikiLinkDecorations();
       vditor.destroy();
@@ -1347,7 +1357,7 @@ function applyToolbarTooltips(toolbar: HTMLElement) {
   }
 }
 
-function mountTableTools(root: HTMLElement, getMarkdown: () => string) {
+function mountTableTools(root: HTMLElement, getMarkdown: () => string, onApplied: () => void) {
   const ir = root.querySelector<HTMLElement>('.vditor-ir');
   if (!ir || ir.querySelector('.msl-table-tools')) return;
 
@@ -1369,6 +1379,7 @@ function mountTableTools(root: HTMLElement, getMarkdown: () => string) {
   ir.appendChild(tools);
 
   let activeCell: HTMLTableCellElement | null = null;
+  let activeTableIndex = -1;
   root.addEventListener('click', (event) => {
     const cell = (event.target as HTMLElement | null)?.closest('td,th') as HTMLTableCellElement | null;
     if (!cell || !root.contains(cell)) {
@@ -1377,6 +1388,9 @@ function mountTableTools(root: HTMLElement, getMarkdown: () => string) {
       return;
     }
     activeCell = cell;
+    // Capture which table was clicked while the cell is still attached — the IR
+    // reconciler may swap the table element out before a tools button is pressed.
+    activeTableIndex = editableTables(ir).indexOf(cell.closest('table') as HTMLTableElement);
     const irRect = ir.getBoundingClientRect();
     const rect = cell.getBoundingClientRect();
     tools.style.left = `${Math.max(8, rect.left - irRect.left)}px`;
@@ -1397,27 +1411,61 @@ function mountTableTools(root: HTMLElement, getMarkdown: () => string) {
     const colIndex = activeCell.cellIndex;
     if (rowIndex < 0 || colIndex < 0) return;
 
-    const transformed = transformFirstMatchingMarkdownTable(getMarkdown(), action, rowIndex, colIndex);
+    const transformed = transformMarkdownTableAt(getMarkdown(), activeTableIndex, action, rowIndex, colIndex);
     if (!transformed) {
       sendInfo('표 소스를 찾지 못했습니다. 표 안에서 한 번 더 클릭한 뒤 시도해 주세요.');
       return;
     }
+    // vditor's programmatic setValue renders with enableInput:false, so the
+    // options.input callback never fires — without onApplied the transform would
+    // live only in the webview DOM and never reach the host document.
     getCurrentVditor()?.setValue(transformed);
+    onApplied();
   });
 }
 
-function transformFirstMatchingMarkdownTable(markdown: string, action: string, rowIndex: number, colIndex: number): string | null {
+/** Tables in the editable IR content, in document order (rendered previews excluded). */
+function editableTables(ir: HTMLElement): HTMLTableElement[] {
+  return Array.from(ir.querySelectorAll<HTMLTableElement>('table')).filter(
+    (table) => !table.closest('.vditor-ir__preview')
+  );
+}
+
+/**
+ * Rewrites the markdown source of the table at `tableIndex` (counting tables the
+ * same way the DOM renders them, so fenced code blocks don't shift the index).
+ */
+function transformMarkdownTableAt(
+  markdown: string,
+  tableIndex: number,
+  action: string,
+  rowIndex: number,
+  colIndex: number
+): string | null {
+  if (tableIndex < 0) return null;
   const lines = markdown.split(/\r?\n/);
+  let seen = 0;
+  let fenceMarker: string | null = null;
   for (let index = 0; index < lines.length - 1; index++) {
+    const fence = lines[index].trim().match(/^(`{3,}|~{3,})/)?.[1];
+    if (fence) {
+      if (!fenceMarker) fenceMarker = fence[0];
+      else if (fence[0] === fenceMarker) fenceMarker = null;
+      continue;
+    }
+    if (fenceMarker) continue;
     if (!looksLikeTableRow(lines[index]) || !isTableSeparator(lines[index + 1])) continue;
     const start = index;
     let end = index + 1;
     while (end + 1 < lines.length && looksLikeTableRow(lines[end + 1])) end++;
 
-    const tableLines = lines.slice(start, end + 1);
-    const next = transformMarkdownTable(tableLines, action, rowIndex, colIndex);
-    if (!next) return null;
-    return [...lines.slice(0, start), ...next, ...lines.slice(end + 1)].join('\n');
+    if (seen === tableIndex) {
+      const next = transformMarkdownTable(lines.slice(start, end + 1), action, rowIndex, colIndex);
+      if (!next) return null;
+      return [...lines.slice(0, start), ...next, ...lines.slice(end + 1)].join('\n');
+    }
+    seen++;
+    index = end;
   }
   return null;
 }
@@ -1476,6 +1524,252 @@ function padRow(row: string[], size: number): string[] {
 
 function formatTableRow(row: string[]): string {
   return `| ${row.join(' | ')} |`;
+}
+
+interface FindTextSegment {
+  node: Text;
+  start: number;
+  length: number;
+}
+
+/**
+ * Ctrl/Cmd+F in-page search over the editable note content. Matches are painted
+ * with the CSS Custom Highlight API, which styles ranges without touching the
+ * DOM — inserting highlight spans into the contenteditable would be reconciled
+ * straight into the markdown by vditor. The chord is consumed in the capture
+ * phase so the VS Code keybinding service never sees it (Tab/Ctrl+B technique).
+ */
+function mountFindBar(root: HTMLElement): () => void {
+  const host = root.querySelector<HTMLElement>('.msl-vditor-host') ?? root;
+  host.querySelector('.msl-find-bar')?.remove();
+
+  const bar = document.createElement('div');
+  bar.className = 'msl-find-bar';
+  bar.innerHTML = `
+    <input type="text" class="msl-find-input" placeholder="Find" spellcheck="false">
+    <span class="msl-find-count">0/0</span>
+    <button type="button" data-find="prev" title="Previous match (Shift+Enter)">↑</button>
+    <button type="button" data-find="next" title="Next match (Enter)">↓</button>
+    <button type="button" data-find="close" title="Close (Escape)">✕</button>
+  `;
+  host.appendChild(bar);
+  const input = bar.querySelector<HTMLInputElement>('.msl-find-input');
+  const counter = bar.querySelector<HTMLElement>('.msl-find-count');
+  if (!input || !counter) return () => bar.remove();
+
+  const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+  const HighlightCtor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+
+  let open = false;
+  let matches: Range[] = [];
+  let current = -1;
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const collectMatches = (query: string): Range[] => {
+    // vditor keeps hidden .vditor-reset elements for its other modes around, so
+    // the IR editable must be addressed through its .vditor-ir container.
+    const editable = root.querySelector<HTMLElement>('.vditor-ir .vditor-reset');
+    if (!editable || !query) return [];
+
+    // Concatenate the *visible* text nodes into one haystack so matches may span
+    // inline formatting boundaries (e.g. a bolded word inside the phrase).
+    // Hidden IR marker text (collapsed `**`, link URLs, …) is skipped so what
+    // you see is what you match; block boundaries get a '\n' separator so a
+    // paragraph's last word never fuses with the next paragraph's first.
+    const segments: FindTextSegment[] = [];
+    let haystack = '';
+    let lastBlock: Element | null = null;
+    const visibilityCache = new Map<HTMLElement, boolean>();
+    const isVisible = (el: HTMLElement): boolean => {
+      const cached = visibilityCache.get(el);
+      if (cached !== undefined) return cached;
+      const visible = el.offsetParent !== null;
+      visibilityCache.set(el, visible);
+      return visible;
+    };
+
+    const walker = document.createTreeWalker(editable, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent ?? '';
+      const parent = (node as Text).parentElement;
+      if (!text || !parent || !isVisible(parent)) continue;
+      const block = parent.closest('[data-block="0"], p, h1, h2, h3, h4, h5, h6, li, td, th, pre');
+      if (lastBlock && block !== lastBlock) haystack += '\n';
+      lastBlock = block;
+      segments.push({ node: node as Text, start: haystack.length, length: text.length });
+      haystack += text;
+    }
+
+    const ranges: Range[] = [];
+    const lowered = haystack.toLowerCase();
+    const needle = query.toLowerCase();
+    let segmentCursor = 0;
+    const segmentAt = (offset: number): FindTextSegment | undefined => {
+      while (segmentCursor < segments.length && segments[segmentCursor].start + segments[segmentCursor].length <= offset) {
+        segmentCursor++;
+      }
+      const segment = segments[segmentCursor];
+      return segment && segment.start <= offset ? segment : undefined;
+    };
+
+    let at = lowered.indexOf(needle);
+    while (at !== -1) {
+      const startSegment = segmentAt(at);
+      const savedCursor = segmentCursor;
+      const endSegment = segmentAt(at + needle.length - 1);
+      segmentCursor = savedCursor;
+      if (startSegment && endSegment) {
+        const range = document.createRange();
+        range.setStart(startSegment.node, at - startSegment.start);
+        range.setEnd(endSegment.node, at + needle.length - endSegment.start);
+        ranges.push(range);
+      }
+      at = lowered.indexOf(needle, at + needle.length);
+    }
+    return ranges;
+  };
+
+  const applyHighlights = () => {
+    if (!highlights || !HighlightCtor) return;
+    if (matches.length === 0) {
+      highlights.delete('msl-find-match');
+      highlights.delete('msl-find-current');
+      return;
+    }
+    highlights.set('msl-find-match', new HighlightCtor(...matches));
+    const active = matches[current];
+    if (active) highlights.set('msl-find-current', new HighlightCtor(active));
+    else highlights.delete('msl-find-current');
+  };
+
+  const updateCount = () => {
+    counter.textContent = matches.length === 0 ? '0/0' : `${current + 1}/${matches.length}`;
+  };
+
+  const revealCurrent = () => {
+    const range = matches[current];
+    if (!range) return;
+    const scroller = root.querySelector<HTMLElement>('.vditor-ir');
+    const rect = range.getBoundingClientRect();
+    if (scroller) {
+      const outer = scroller.getBoundingClientRect();
+      if (rect.top < outer.top + 40 || rect.bottom > outer.bottom - 40) {
+        scroller.scrollTop += rect.top - outer.top - scroller.clientHeight / 2;
+      }
+      return;
+    }
+    (range.startContainer.parentElement ?? undefined)?.scrollIntoView({ block: 'center' });
+  };
+
+  const runSearch = (keepIndex = false) => {
+    const previous = current;
+    matches = collectMatches(input.value);
+    current = matches.length === 0 ? -1 : keepIndex ? Math.min(Math.max(previous, 0), matches.length - 1) : 0;
+    applyHighlights();
+    updateCount();
+    if (!keepIndex) revealCurrent();
+  };
+
+  const navigate = (direction: 1 | -1) => {
+    if (matches.length === 0) return;
+    current = (current + direction + matches.length) % matches.length;
+    applyHighlights();
+    updateCount();
+    revealCurrent();
+  };
+
+  const openBar = () => {
+    open = true;
+    bar.classList.add('msl-find-bar--visible');
+    const selection = window.getSelection();
+    const selected = selection && !selection.isCollapsed ? selection.toString() : '';
+    if (selected && selected.length <= 200 && !selected.includes('\n')) input.value = selected;
+    input.focus();
+    input.select();
+    runSearch();
+  };
+
+  const closeBar = () => {
+    open = false;
+    bar.classList.remove('msl-find-bar--visible');
+    matches = [];
+    current = -1;
+    highlights?.delete('msl-find-match');
+    highlights?.delete('msl-find-current');
+    getCurrentVditor()?.focus();
+  };
+
+  const consume = (event: KeyboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  };
+
+  const onGlobalKeyDown = (event: KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.code === 'KeyF') {
+      consume(event);
+      openBar();
+      return;
+    }
+    if (!open) return;
+    if (event.code === 'F3') {
+      consume(event);
+      navigate(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.code === 'Escape') {
+      consume(event);
+      closeBar();
+    }
+  };
+
+  const onInputKeyDown = (event: KeyboardEvent) => {
+    if (event.code === 'Enter' || event.code === 'NumpadEnter') {
+      consume(event);
+      navigate(event.shiftKey ? -1 : 1);
+    }
+  };
+
+  const onInput = () => {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runSearch(), 80);
+  };
+
+  const onBarClick = (event: MouseEvent) => {
+    const action = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-find]')?.dataset.find;
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'prev') navigate(-1);
+    else if (action === 'next') navigate(1);
+    else closeBar();
+  };
+
+  // Document edits replace the text nodes our ranges point into; refresh the
+  // search against the new DOM while keeping the user's position in the list.
+  const observer = new MutationObserver(() => {
+    if (!open || !input.value) return;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => runSearch(true), 150);
+  });
+  const editable = root.querySelector<HTMLElement>('.vditor-ir .vditor-reset');
+  if (editable) observer.observe(editable, { childList: true, subtree: true, characterData: true });
+
+  document.addEventListener('keydown', onGlobalKeyDown, true);
+  input.addEventListener('keydown', onInputKeyDown);
+  input.addEventListener('input', onInput);
+  bar.addEventListener('click', onBarClick);
+
+  return () => {
+    document.removeEventListener('keydown', onGlobalKeyDown, true);
+    observer.disconnect();
+    if (searchTimer) clearTimeout(searchTimer);
+    if (refreshTimer) clearTimeout(refreshTimer);
+    highlights?.delete('msl-find-match');
+    highlights?.delete('msl-find-current');
+    bar.remove();
+  };
 }
 
 function applyCssVariables(settings: EditorSettings) {
@@ -2117,6 +2411,16 @@ body {
 .msl-table-tools button { height: 22px; min-width: 24px; border: 0; border-radius: 5px; padding: 0 5px; color: var(--vscode-foreground); background: transparent; font: 600 10px var(--vscode-font-family); cursor: pointer; }
 .msl-table-tools button:hover { background: color-mix(in srgb, var(--msl-heading-1-color, #ff6f61) 22%, transparent); }
 .msl-table-tools span { width: 1px; height: 14px; background: var(--msl-soft-border); }
+.msl-vditor-host { position: relative; }
+.msl-find-bar { position: absolute; top: 8px; right: 18px; display: none; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid var(--msl-border); border-radius: 8px; background: var(--msl-menu-bg); box-shadow: 0 8px 24px rgba(0,0,0,.28); z-index: 60; }
+.msl-find-bar--visible { display: flex; }
+.msl-find-input { width: 190px; height: 24px; border: 1px solid var(--msl-soft-border); border-radius: 5px; padding: 0 8px; color: var(--vscode-foreground); background: transparent; font: 12px var(--vscode-font-family); outline: none; }
+.msl-find-input:focus { border-color: color-mix(in srgb, var(--msl-heading-1-color, #ff6f61) 55%, transparent); }
+.msl-find-count { min-width: 38px; text-align: center; color: var(--vscode-descriptionForeground, #9a9a9a); font: 11px var(--vscode-font-family); }
+.msl-find-bar button { height: 24px; min-width: 24px; border: 0; border-radius: 5px; padding: 0; color: var(--vscode-foreground); background: transparent; font: 600 12px var(--vscode-font-family); cursor: pointer; }
+.msl-find-bar button:hover { background: color-mix(in srgb, var(--msl-heading-1-color, #ff6f61) 22%, transparent); }
+::highlight(msl-find-match) { background-color: rgba(255, 204, 61, 0.4); }
+::highlight(msl-find-current) { background-color: rgba(255, 111, 97, 0.65); }
 `;
   document.head.appendChild(style);
 }
