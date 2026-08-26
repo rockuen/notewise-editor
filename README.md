@@ -10,6 +10,7 @@ NoteWise Markdown Editor combines a calendar sidebar with a polished Markdown li
 - Custom live editor for `.md` and `.markdown` files.
 - Markdown preview behavior for tables, images, links, headings, lists, and blockquotes while staying editable.
 - External `http`, `https`, `mailto`, and `tel` links open through the OS default browser/app.
+- Local `.html` files open in the web browser instead of an editor tab - both note links and calendar clicks - keeping any `#anchor` from the link. Set `noteWise.openHtmlIn` to `editor` to go back to the old behavior.
 - Inline code keeps the same font size as surrounding text for readability.
 - Obsidian-style wiki links with `[[` note suggestions, clickable highlighted `[[Note]]` text, and missing-note creation.
 - Pasted images are saved to an `assets` folder and inserted as Markdown image links.
@@ -25,6 +26,8 @@ NoteWise Markdown Editor combines a calendar sidebar with a polished Markdown li
 - `NoteWise: Open with NoteWise Markdown Editor`
 - `NoteWise: Switch NoteWise Markdown Editor`
 - `NoteWise: Select Editor Font`
+- `NoteWise: Open in Browser`
+- `NoteWise: Open in Editor`
 - `NoteWise: Focus Calendar`
 - `NoteWise: Install Google Calendar Connector`
 
@@ -44,6 +47,7 @@ NoteWise keeps the existing setting keys for compatibility:
 
 ```json
 {
+  "noteWise.openHtmlIn": "browser",
   "noteWise.calendar.openMarkdownIn": "editor",
   "noteWise.editor.theme.mode": "auto",
   "noteWise.editor.ui.fontFamily": "",

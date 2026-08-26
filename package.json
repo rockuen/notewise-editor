@@ -2,7 +2,7 @@
   "name": "notewise-editor",
   "displayName": "NoteWise Markdown Editor",
   "description": "No more Obsidian switching. Calendar-aware Markdown editor for VS Code.",
-  "version": "0.1.51",
+  "version": "0.1.52",
   "publisher": "rockuen",
   "author": {
     "name": "rockuen",
@@ -49,7 +49,9 @@
     "onCommand:noteWise.editor.open",
     "onCommand:noteWise.editor.switchEditor",
     "onCommand:noteWise.editor.selectFont",
-    "onCommand:noteWise.calendar.newNote"
+    "onCommand:noteWise.calendar.newNote",
+    "onCommand:noteWise.openInBrowser",
+    "onCommand:noteWise.openInEditor"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -110,6 +112,16 @@
         "category": "NoteWise"
       },
       {
+        "command": "noteWise.openInBrowser",
+        "title": "Open in Browser",
+        "category": "NoteWise"
+      },
+      {
+        "command": "noteWise.openInEditor",
+        "title": "Open in Editor",
+        "category": "NoteWise"
+      },
+      {
         "command": "noteWise.calendar.focusCalendar",
         "title": "NoteWise: Focus Calendar"
       },
@@ -148,6 +160,11 @@
           "when": "resourceLangId == markdown",
           "command": "noteWise.editor.open",
           "group": "navigation"
+        },
+        {
+          "when": "resourceLangId == html",
+          "command": "noteWise.openInBrowser",
+          "group": "navigation"
         }
       ],
       "editor/title/context": [
@@ -155,6 +172,28 @@
           "when": "resourceLangId == markdown",
           "command": "noteWise.editor.open",
           "group": "1_open"
+        },
+        {
+          "when": "resourceLangId == html",
+          "command": "noteWise.openInBrowser",
+          "group": "1_open"
+        }
+      ],
+      "editor/context": [
+        {
+          "when": "resourceLangId == html",
+          "command": "noteWise.openInBrowser",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "noteWise.openInBrowser",
+          "when": "resourceLangId == html"
+        },
+        {
+          "command": "noteWise.openInEditor",
+          "when": "resourceLangId == html"
         }
       ],
       "view/title": [
@@ -196,6 +235,19 @@
     "configuration": {
       "title": "NoteWise Markdown Editor",
       "properties": {
+        "noteWise.openHtmlIn": {
+          "type": "string",
+          "default": "browser",
+          "enum": [
+            "browser",
+            "editor"
+          ],
+          "enumDescriptions": [
+            "Hand .html files to the OS default application, which is normally your web browser.",
+            "Open .html files in the VS Code editor."
+          ],
+          "description": "Where NoteWise opens .html files - links inside a note and clicks in the NoteWise calendar view. Use the NoteWise: Open in Editor command to see the source without changing this setting."
+        },
         "noteWise.calendar.obsidianVault": {
           "type": "string",
           "default": "",

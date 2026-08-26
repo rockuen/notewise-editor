@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { openInDefaultBrowser, openInDefaultEditor } from './browser';
 import { selectEditorFont } from './fonts';
 import { MarkdownStageLiveProvider, VIEW_TYPE } from './provider';
 
@@ -66,6 +67,43 @@ export function activate(context: vscode.ExtensionContext) {
       await selectEditorFont();
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('noteWise.openInBrowser', async (uri?: vscode.Uri) => {
+      const target = resolveCommandUri(uri);
+      if (!target) {
+        await vscode.window.showInformationMessage('Open a file first, or run this from the Explorer.');
+        return;
+      }
+      await openInDefaultBrowser(target);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('noteWise.openInEditor', async (uri?: vscode.Uri) => {
+      const target = resolveCommandUri(uri);
+      if (!target) {
+        await vscode.window.showInformationMessage('Open a file first, or run this from the Explorer.');
+        return;
+      }
+      await openInDefaultEditor(target);
+    })
+  );
+}
+
+/**
+ * Explorer and editor-title menus hand the resource in. The Command Palette does
+ * not, so fall back to whatever the active tab points at - including custom
+ * editor tabs, which have no `activeTextEditor`.
+ */
+function resolveCommandUri(uri?: vscode.Uri): vscode.Uri | undefined {
+  if (uri?.scheme === 'file') return uri;
+
+  const tabInput = vscode.window.tabGroups.activeTabGroup.activeTab?.input as { uri?: vscode.Uri } | undefined;
+  if (tabInput?.uri?.scheme === 'file') return tabInput.uri;
+
+  const activeDocument = vscode.window.activeTextEditor?.document.uri;
+  return activeDocument?.scheme === 'file' ? activeDocument : undefined;
 }
 
 export function deactivate() {

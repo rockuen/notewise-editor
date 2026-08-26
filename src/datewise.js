@@ -4,6 +4,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const https = require('https');
+const { getHtmlOpenTarget, isHtmlPath, openInDefaultBrowser, openInDefaultEditor } = require('./browser');
 
 // ── 날짜 유틸 ──
 
@@ -618,6 +619,10 @@ class CalendarViewProvider {
                         }
                     });
                 });
+            } else if (msg.type === 'openInEditor') {
+                openInDefaultEditor(vscode.Uri.file(msg.path)).then(undefined, (err) => {
+                    vscode.window.showErrorMessage(`Failed to open in editor: ${err?.message || String(err)}`);
+                });
             } else if (msg.type === 'revealInFinder') {
                 const dirPath = path.dirname(msg.path);
                 this._openWithOS(dirPath);
@@ -724,6 +729,12 @@ class CalendarViewProvider {
         const externalExts = (config.get('externalExtensions') || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
         if (externalExts.includes(extNoDot)) {
             this._openWithOS(filePath);
+            return;
+        }
+
+        // HTML → 웹 브라우저. noteWise.openHtmlIn = editor 로 되돌릴 수 있다.
+        if (isHtmlPath(filePath) && getHtmlOpenTarget() === 'browser') {
+            await openInDefaultBrowser(vscode.Uri.file(filePath));
             return;
         }
 
@@ -1265,6 +1276,7 @@ body {
 <div id="app"></div>
 <div class="ctx-menu" id="ctxMenu">
     <div class="ctx-menu-item" data-action="open">\u{1F4C2} Open File</div>
+    <div class="ctx-menu-item" id="ctxOpenInEditor" data-action="openInEditor">\u{1F4DD} Open in Editor</div>
     <div class="ctx-menu-item" data-action="reveal">\u{1F50D} Reveal in Finder</div>
     <div class="ctx-menu-sep"></div>
     <div class="ctx-menu-item" data-action="rename">\u{270F}\u{FE0F} Rename</div>
@@ -1883,6 +1895,7 @@ document.getElementById('app').addEventListener('click', (e) => {
 
 // --- Context Menu ---
 const ctxMenu = document.getElementById('ctxMenu');
+const ctxOpenInEditor = document.getElementById('ctxOpenInEditor');
 let ctxTargetPath = null;
 
 document.getElementById('app').addEventListener('contextmenu', (e) => {
@@ -1890,11 +1903,12 @@ document.getElementById('app').addEventListener('contextmenu', (e) => {
     if (el && el.dataset.path) {
         e.preventDefault();
         ctxTargetPath = el.dataset.path;
-        const x = Math.min(e.clientX, window.innerWidth - 170);
-        const y = Math.min(e.clientY, window.innerHeight - 160);
-        ctxMenu.style.left = x + 'px';
-        ctxMenu.style.top = y + 'px';
+        ctxOpenInEditor.style.display = /\.x?html?$/i.test(ctxTargetPath) ? '' : 'none';
         ctxMenu.classList.add('show');
+        const x = Math.min(e.clientX, window.innerWidth - ctxMenu.offsetWidth - 8);
+        const y = Math.min(e.clientY, window.innerHeight - ctxMenu.offsetHeight - 8);
+        ctxMenu.style.left = Math.max(4, x) + 'px';
+        ctxMenu.style.top = Math.max(4, y) + 'px';
     }
 });
 
@@ -1908,6 +1922,7 @@ ctxMenu.addEventListener('click', (e) => {
     if (!item || !ctxTargetPath) return;
     const action = item.dataset.action;
     if (action === 'open') openFile(ctxTargetPath);
+    else if (action === 'openInEditor') vscode.postMessage({ type: 'openInEditor', path: ctxTargetPath });
     else if (action === 'reveal') vscode.postMessage({ type: 'revealInFinder', path: ctxTargetPath });
     else if (action === 'copy') vscode.postMessage({ type: 'copyPath', path: ctxTargetPath });
     else if (action === 'rename') vscode.postMessage({ type: 'renameFile', path: ctxTargetPath });

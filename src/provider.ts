@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { getHtmlOpenTarget, isHtmlPath, openInDefaultBrowser } from './browser';
 import { defaultUiFontFamily } from './fonts';
 import type { ClientMessage, ColorRole, DocumentInfo, EditorPalette, EditorSettings, HostMessage, StageColors, StageIndentation, ThemeMode, SyntaxVisibility, WikiLinkCandidate } from './messages';
 
@@ -393,6 +394,11 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
       return;
     }
 
+    if (target.scheme === 'file' && isHtmlPath(target.fsPath) && getHtmlOpenTarget() === 'browser') {
+      await openInDefaultBrowser(withLinkSuffix(target, href));
+      return;
+    }
+
     await vscode.commands.executeCommand('vscode.open', target);
   }
 
@@ -608,6 +614,24 @@ function hasUriScheme(value: string): boolean {
 function getLinkPathPart(value: string): string {
   const markerIndex = value.search(/[?#]/);
   return markerIndex >= 0 ? value.slice(0, markerIndex) : value;
+}
+
+/**
+ * Re-attaches the `?query` / `#fragment` that `getLinkPathPart` stripped, so a
+ * note link like `report.html#summary` still reaches the anchor in the browser.
+ */
+function withLinkSuffix(uri: vscode.Uri, href: string): vscode.Uri {
+  const trimmed = href.trim();
+  const markerIndex = trimmed.search(/[?#]/);
+  if (markerIndex < 0) return uri;
+
+  const suffix = trimmed.slice(markerIndex);
+  if (suffix.startsWith('#')) return uri.with({ fragment: suffix.slice(1) });
+
+  const hashIndex = suffix.indexOf('#');
+  return hashIndex < 0
+    ? uri.with({ query: suffix.slice(1) })
+    : uri.with({ query: suffix.slice(1, hashIndex), fragment: suffix.slice(hashIndex + 1) });
 }
 
 function safeDecodeUriComponent(value: string): string {
