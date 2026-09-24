@@ -47,6 +47,10 @@ export function sendSave(content: string) {
   vscode.postMessage({ type: 'save', content });
 }
 
+export function sendReload() {
+  vscode.postMessage({ type: 'reload' });
+}
+
 export function sendInfo(content: string) {
   vscode.postMessage({ type: 'info', content });
 }

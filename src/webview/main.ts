@@ -1,10 +1,14 @@
 import type { EditorSettings } from '../messages';
 import { applyEditorSettings, createMarkdownEditor, injectChromeStyles, insertEditorText, setVditorCdnUri, type NoteWiseEditorView, updateEditorContent } from './editor';
 import { mountSettingsPanel, updateSettingsPanel } from './settingsPanel';
-import { onHostMessage, sendBlur, sendEdit, sendFocus, sendPasteImage, sendReady } from './sync';
+import { onHostMessage, sendBlur, sendEdit, sendFocus, sendPasteImage, sendReady, sendReload, sendSave } from './sync';
 
 let editorView: NoteWiseEditorView | undefined;
 let localChangeTimer: ReturnType<typeof setTimeout> | undefined;
+// From `reload` until the host's `reloadDone`, edits are held back: one landing
+// right after the host's revert would bring the discarded text back.
+let reloadPending = false;
+let heldEdit: string | undefined;
 
 onHostMessage((message) => {
   switch (message.type) {
@@ -28,17 +32,59 @@ onHostMessage((message) => {
       app.appendChild(card);
 
       mountSettingsPanel(topbar, message.settings, message.document);
-      editorView = createMarkdownEditor(host, message.content, message.settings, message.document, (content) => {
-        if (localChangeTimer) clearTimeout(localChangeTimer);
-        localChangeTimer = setTimeout(() => sendEdit(content), 60);
-      });
+      editorView = createMarkdownEditor(
+        host,
+        message.content,
+        message.settings,
+        message.document,
+        (content) => {
+          if (localChangeTimer) clearTimeout(localChangeTimer);
+          localChangeTimer = setTimeout(() => {
+            localChangeTimer = undefined;
+            if (reloadPending) heldEdit = content;
+            else sendEdit(content);
+          }, 60);
+        },
+        () => {
+          if (reloadPending) return;
+          // Flush typing still in the debounce so the host sees it as unsaved
+          // and asks before discarding it.
+          if (localChangeTimer && editorView) {
+            clearTimeout(localChangeTimer);
+            localChangeTimer = undefined;
+            sendEdit(editorView.getValue());
+          }
+          reloadPending = true;
+          sendReload();
+        },
+        (content) => {
+          // The save carries the freshest text; an edit still queued here holds
+          // older text and would land after the save, reverting it.
+          if (localChangeTimer) clearTimeout(localChangeTimer);
+          localChangeTimer = undefined;
+          heldEdit = undefined;
+          sendSave(content);
+        }
+      );
       setupFocusTracking(editorView);
       setupPasteImageHandling(editorView);
       break;
     }
 
     case 'update':
+      // The host copy wins: a debounced local change still in flight would push
+      // the pre-update text back over it (e.g. right after Reload from disk).
+      if (localChangeTimer) clearTimeout(localChangeTimer);
+      localChangeTimer = undefined;
+      heldEdit = undefined;
       if (editorView) updateEditorContent(editorView, message.content);
+      break;
+
+    case 'reloadDone':
+      reloadPending = false;
+      // Cancelled: whatever was typed meanwhile still belongs in the document.
+      if (heldEdit !== undefined) sendEdit(heldEdit);
+      heldEdit = undefined;
       break;
 
     case 'insertText':

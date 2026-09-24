@@ -23,7 +23,9 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
   private readonly updateTimers = new Map<vscode.WebviewPanel, ReturnType<typeof setTimeout>>();
   private editTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingEdit: string | undefined;
+  private pendingEditDocument: vscode.TextDocument | undefined;
   private applyingEdit = false;
+  private editQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.context.subscriptions.push(
@@ -63,6 +65,9 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
     const documentSub = vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.uri.toString() !== document.uri.toString()) return;
       if (this.applyingEdit) return;
+      // Save/revert also fire this with no content changes (dirty-flag flips);
+      // echoing those would only race the webview's pending local edits.
+      if (event.contentChanges.length === 0) return;
 
       const existingTimer = this.updateTimers.get(webviewPanel);
       if (existingTimer) clearTimeout(existingTimer);
@@ -93,8 +98,17 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
           this.savePastedImage(document, webviewPanel, message);
           break;
         case 'save':
-          this.applyFullDocumentEdit(document, message.content);
-          document.save();
+          void this.saveDocument(document, message.content).catch((error) => {
+            vscode.window.showErrorMessage(`NoteWise save failed: ${String(error)}`);
+          });
+          break;
+        case 'reload':
+          void this.reloadFromDisk(document, webviewPanel)
+            .catch((error) => {
+              vscode.window.showErrorMessage(`NoteWise reload failed: ${String(error)}`);
+            })
+            // The webview holds its edits back until this arrives.
+            .finally(() => this.post(webviewPanel, { type: 'reloadDone' }));
           break;
         case 'info':
           vscode.window.showInformationMessage(message.content);
@@ -160,16 +174,29 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
   private applyFullDocumentEdit(document: vscode.TextDocument, content: string) {
     if (content === document.getText()) return;
     this.pendingEdit = content;
+    this.pendingEditDocument = document;
 
     if (this.editTimer) clearTimeout(this.editTimer);
     this.editTimer = setTimeout(async () => {
       const nextContent = this.pendingEdit;
       this.pendingEdit = undefined;
-      if (nextContent === undefined || nextContent === document.getText()) return;
+      this.pendingEditDocument = undefined;
+      if (nextContent === undefined) return;
+      await this.replaceDocumentText(document, nextContent);
+    }, 80);
+  }
 
+  /**
+   * Queued one at a time: each replacement measures the full range only after
+   * the previous one landed (a stale range would leave the old tail behind), and
+   * `applyingEdit` stays true for exactly the edit in flight.
+   */
+  private replaceDocumentText(document: vscode.TextDocument, content: string): Promise<void> {
+    const run = async () => {
+      if (content === document.getText()) return;
       const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(document.uri, fullRange, nextContent);
+      edit.replace(document.uri, fullRange, content);
 
       this.applyingEdit = true;
       try {
@@ -177,7 +204,88 @@ export class MarkdownStageLiveProvider implements vscode.CustomTextEditorProvide
       } finally {
         this.applyingEdit = false;
       }
-    }, 80);
+    };
+    const next = this.editQueue.then(run);
+    this.editQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Applies the webview's current text right away, then saves. Going through
+   * the 80ms debounce let save() write the text from before the latest typing.
+   */
+  private async saveDocument(document: vscode.TextDocument, content: string) {
+    if (this.pendingEditDocument === document) {
+      if (this.editTimer) clearTimeout(this.editTimer);
+      this.editTimer = undefined;
+      this.pendingEdit = undefined;
+      this.pendingEditDocument = undefined;
+    }
+    await this.replaceDocumentText(document, content);
+    // save() reports failure by resolving false, not by throwing.
+    if (!(await document.save())) {
+      vscode.window.showErrorMessage(`NoteWise could not save "${path.basename(document.uri.fsPath)}".`);
+    }
+  }
+
+  /**
+   * Re-reads the file from disk so edits made outside VS Code show up. VS Code
+   * only auto-reloads a clean document, and never one with unsaved changes, so
+   * this is the manual path. The webview flushes pending typing before asking,
+   * so an edit still pending or in flight counts as unsaved too.
+   */
+  private async reloadFromDisk(document: vscode.TextDocument, panel: vscode.WebviewPanel) {
+    if (document.uri.scheme !== 'file') {
+      vscode.window.showInformationMessage('NoteWise can only reload notes saved on disk.');
+      return;
+    }
+    const name = path.basename(document.uri.fsPath);
+    try {
+      await vscode.workspace.fs.stat(document.uri);
+    } catch {
+      // revert would swallow FILE_NOT_FOUND and mark the unsaved text clean.
+      vscode.window.showErrorMessage(`NoteWise: "${name}" no longer exists on disk.`);
+      return;
+    }
+
+    if (document.isDirty || this.pendingEditDocument === document || this.applyingEdit) {
+      const choice = await vscode.window.showWarningMessage(
+        `Discard unsaved changes to "${name}" and reload it from disk?`,
+        { modal: true },
+        'Reload'
+      );
+      if (choice !== 'Reload') return;
+    }
+
+    // A queued webview edit landing after the revert would restore the old text.
+    if (this.pendingEditDocument === document) {
+      if (this.editTimer) clearTimeout(this.editTimer);
+      this.editTimer = undefined;
+      this.pendingEdit = undefined;
+      this.pendingEditDocument = undefined;
+    }
+
+    // `revert` re-reads the file and clears the dirty flag, but it acts on the
+    // active editor — only run it while that is this panel, or it would
+    // discard another file's unsaved changes.
+    if (!panel.active) {
+      vscode.window.showInformationMessage('NoteWise: click into the note, then reload again.');
+      return;
+    }
+    await vscode.commands.executeCommand('workbench.action.files.revert');
+
+    // The revert's change event queued an `update` of its own; the one below
+    // replaces it (a second re-render would reset the caret again).
+    const timer = this.updateTimers.get(panel);
+    if (timer) clearTimeout(timer);
+    this.updateTimers.delete(panel);
+
+    this.post(panel, { type: 'update', content: document.getText() });
+    if (document.isDirty) {
+      vscode.window.showWarningMessage(`NoteWise could not reload "${name}" from disk.`);
+    } else {
+      vscode.window.setStatusBarMessage('NoteWise: reloaded from disk', 2500);
+    }
   }
 
   private broadcastSettings() {

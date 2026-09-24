@@ -1,7 +1,7 @@
 import Vditor from 'vditor';
 import 'vditor/dist/index.css';
 import type { ColorRole, DocumentInfo, EditorSettings, WikiLinkCandidate } from '../messages';
-import { sendError, sendInfo, sendOpenLink, sendOpenWikiLink, sendPasteImage, sendSave } from './sync';
+import { sendError, sendInfo, sendOpenLink, sendOpenWikiLink, sendPasteImage } from './sync';
 
 export interface NoteWiseEditorView {
   dom: HTMLElement;
@@ -15,10 +15,11 @@ export interface NoteWiseEditorView {
 let applyingRemoteUpdate = false;
 let chromeStylesInjected = false;
 let currentVditor: Vditor | undefined;
-let currentGetFullValue: (() => string) | undefined;
+let currentSave: (() => void) | undefined;
 let vditorCdnUri = '';
 let resourceBaseUri = '';
 let imagePreviewClosePatched = false;
+let saveHotkeyPatched = false;
 let wikiLinkDecorationFrame: number | undefined;
 let wikiLinkRanges: WikiLinkRange[] = [];
 
@@ -41,12 +42,28 @@ export function createMarkdownEditor(
   content: string,
   settings: EditorSettings,
   documentInfo: DocumentInfo,
-  onLocalChange: (content: string) => void
+  sendLocalChange: (content: string) => void,
+  onReload: () => void,
+  onSave: (content: string) => void
 ): NoteWiseEditorView {
+  // Last text exchanged with the host, as vditor serializes it (vditor rewrites
+  // markdown, so the raw document text is no baseline). vditor reports typing
+  // only ~800ms later (undoDelay); Reload compares against this to catch it.
+  let lastSyncedValue: string | undefined;
+  const onLocalChange = (value: string) => {
+    lastSyncedValue = value;
+    sendLocalChange(value);
+  };
+  const reloadFromDisk = () => {
+    const value = getFullValue();
+    if (lastSyncedValue !== undefined && value !== lastSyncedValue) onLocalChange(value);
+    onReload();
+  };
   applyCssVariables(settings);
   scheduleHeadingPresentation(parent);
   patchImagePreviewClose();
-  resourceBaseUri = documentInfo.resourceBaseUri ?? '';
+  patchSaveHotkey();
+  resourceBaseUri =documentInfo.resourceBaseUri ?? '';
   let visibleDocument = splitYamlFrontmatter(content);
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
@@ -90,7 +107,7 @@ export function createMarkdownEditor(
       isOpen: false,
       click: (bom: Element | null) => openVditorLink(bom),
     },
-    toolbar: createToolbar(),
+    toolbar: createToolbar(reloadFromDisk),
     hint: createWikiLinkHint(documentInfo.wikiLinks),
     input(value: string) {
       if (applyingRemoteUpdate) return;
@@ -107,6 +124,12 @@ export function createMarkdownEditor(
       },
     },
     after() {
+      // Like Obsidian, only `~~text~~` strikes through. lute also treats a single
+      // `~text~` as strikethrough, which mangles ranges such as `8~10°C (4~7)`.
+      // vditor exposes no option for it, so switch it off on its lute instance
+      // and re-render what init already rendered with it on.
+      getInternalVditor(vditor)?.lute?.SetGFMStrikethrough1?.(false);
+      if (visibleDocument.body.includes('~')) vditor.setValue(visibleDocument.body, true);
       patchLinkOpening(parent);
       patchCodeBlockCopy(parent);
       dockVditorToolbar(parent);
@@ -137,6 +160,7 @@ export function createMarkdownEditor(
       scheduleWikiLinkDecorations(parent);
       scheduleHeadingPresentation(parent);
       scheduleImageWidthPresentation(parent);
+      lastSyncedValue = joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue());
       vditor.focus();
     },
   });
@@ -146,7 +170,12 @@ export function createMarkdownEditor(
     onLocalChange(joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue()));
   });
   const getFullValue = () => joinYamlFrontmatter(visibleDocument.frontmatter, vditor.getValue());
-  currentGetFullValue = getFullValue;
+  const save = () => {
+    const value = getFullValue();
+    lastSyncedValue = value;
+    onSave(value);
+  };
+  currentSave = save;
 
   return {
     dom: parent,
@@ -158,6 +187,7 @@ export function createMarkdownEditor(
       applyingRemoteUpdate = true;
       try {
         vditor.setValue(split.body);
+        lastSyncedValue = getFullValue();
         scheduleWikiLinkDecorations(parent);
         scheduleHeadingPresentation(parent);
         scheduleImageWidthPresentation(parent);
@@ -169,7 +199,7 @@ export function createMarkdownEditor(
     focus: () => vditor.focus(),
     destroy: () => {
       if (currentVditor === vditor) currentVditor = undefined;
-      if (currentGetFullValue === getFullValue) currentGetFullValue = undefined;
+      if (currentSave === save) currentSave = undefined;
       detachTabIndentHandling?.();
       detachTabIndentHandling = undefined;
       detachHeadingHotkeys?.();
@@ -231,7 +261,7 @@ export function previewDocColor(role: ColorRole, value: string, index?: number) 
   }
 }
 
-function createToolbar(): any[] {
+function createToolbar(onReload: () => void): any[] {
   const tool = (name: string, tipPosition = 's') => ({
     name,
     tipPosition,
@@ -245,11 +275,14 @@ function createToolbar(): any[] {
       tipPosition: 's',
       tip: TOOLTIP_LABELS['save'],
       icon: TOOLBAR_ICONS['save'],
-      click() {
-        const content = currentGetFullValue?.();
-        if (content === undefined) return;
-        sendSave(content);
-      },
+      click: saveCurrentDocument,
+    },
+    {
+      name: 'reload',
+      tipPosition: 's',
+      tip: TOOLTIP_LABELS['reload'],
+      icon: TOOLBAR_ICONS['reload'],
+      click: onReload,
     },
     '|',
     tool('bold'),
@@ -327,12 +360,43 @@ function createToolbar(): any[] {
   ].map((item: any) => (typeof item === 'string' ? { name: item, tipPosition: 's' } : { tipPosition: 's', ...item }));
 }
 
+/**
+ * Saves the editor's live text, which may include typing vditor has not
+ * reported yet (its input callback lags ~800ms); the host applies it before
+ * saving so nothing typed just before the save is left out.
+ */
+function saveCurrentDocument() {
+  currentSave?.();
+}
+
+/**
+ * Ctrl/Cmd+S would otherwise reach VS Code's own save, which writes the host
+ * document without the typing the webview has not synced yet. Consume it in the
+ * capture phase (the Ctrl+B/Ctrl+F technique) and save the live text instead.
+ */
+function patchSaveHotkey() {
+  if (saveHotkeyPatched) return;
+  saveHotkeyPatched = true;
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.code !== 'KeyS') return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      saveCurrentDocument();
+    },
+    true
+  );
+}
+
 function icon(name: string): string {
   return `<svg class="msl-toolbar-icon msl-toolbar-icon--${name}" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><use href="#msl-icon-${name}"></use></svg>`;
 }
 
 const TOOLBAR_ICONS: Record<string, string> = {
   save: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>`,
+  reload: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"></path><path d="M21 3v5h-5"></path></svg>`,
   bold: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path></svg>`,
   link: `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1"></path></svg>`,
   'wiki-link': `<svg class="msl-toolbar-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5H4v14h3"></path><path d="M17 5h3v14h-3"></path><path d="M10 13a4 4 0 0 0 5.7 0l.8-.8a4 4 0 0 0-5.7-5.7l-.5.5"></path><path d="M14 11a4 4 0 0 0-5.7 0l-.8.8a4 4 0 0 0 5.7 5.7l.5-.5"></path></svg>`,
@@ -363,6 +427,7 @@ const TOOLBAR_ICONS: Record<string, string> = {
 
 const TOOLTIP_LABELS: Record<string, string> = {
   save: 'Save',
+  reload: 'Reload from disk',
   bold: /Mac|iP(hone|ad|od)/.test(navigator.platform) ? 'Bold (⌘B)' : 'Bold (Ctrl+B)',
   link: 'Link',
   'wiki-link': 'Internal note link',
@@ -1161,6 +1226,7 @@ type VditorInternal = {
   wysiwyg?: VditorModeState;
   sv?: VditorModeState;
   toolbar?: { elements?: Record<string, HTMLElement> };
+  lute?: { SetGFMStrikethrough1?(enable: boolean): void };
 };
 
 function getInternalVditor(vditor: Vditor): VditorInternal | undefined {
@@ -1650,17 +1716,7 @@ function mountFindBar(root: HTMLElement): () => void {
 
   const revealCurrent = () => {
     const range = matches[current];
-    if (!range) return;
-    const scroller = root.querySelector<HTMLElement>('.vditor-ir');
-    const rect = range.getBoundingClientRect();
-    if (scroller) {
-      const outer = scroller.getBoundingClientRect();
-      if (rect.top < outer.top + 40 || rect.bottom > outer.bottom - 40) {
-        scroller.scrollTop += rect.top - outer.top - scroller.clientHeight / 2;
-      }
-      return;
-    }
-    (range.startContainer.parentElement ?? undefined)?.scrollIntoView({ block: 'center' });
+    if (range) scrollRangeIntoView(range, root);
   };
 
   const runSearch = (keepIndex = false) => {
@@ -1770,6 +1826,31 @@ function mountFindBar(root: HTMLElement): () => void {
     highlights?.delete('msl-find-current');
     bar.remove();
   };
+}
+
+/**
+ * Centers a range inside every scrollable ancestor up to `boundary`, innermost
+ * first (a wide table's horizontal scroller, then the note's vertical one). The
+ * scroller is found from computed style instead of assumed: in IR mode it is the
+ * `pre.vditor-reset` (vditor gives it `height: 100%` + `overflow: auto`), not the
+ * `.vditor-ir` wrapper, which never overflows.
+ */
+function scrollRangeIntoView(range: Range, boundary: HTMLElement) {
+  // A match whose text node a re-render replaced collapses to a 0×0 rect at the
+  // viewport origin; scrolling to it would jump. The find refresh re-resolves it.
+  if (range.collapsed) return;
+  const margin = 40;
+  for (let el = range.startContainer.parentElement; el && boundary.contains(el); el = el.parentElement) {
+    const style = getComputedStyle(el);
+    const rect = range.getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    if (/auto|scroll/.test(style.overflowY) && el.scrollHeight > el.clientHeight && (rect.top < box.top + margin || rect.bottom > box.bottom - margin)) {
+      el.scrollTop += rect.top - box.top - (el.clientHeight - rect.height) / 2;
+    }
+    if (/auto|scroll/.test(style.overflowX) && el.scrollWidth > el.clientWidth && (rect.left < box.left || rect.right > box.right)) {
+      el.scrollLeft += rect.left - box.left - (el.clientWidth - rect.width) / 2;
+    }
+  }
 }
 
 function applyCssVariables(settings: EditorSettings) {

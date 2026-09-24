@@ -61,6 +61,8 @@ export interface WikiLinkCandidate {
 export type HostMessage =
   | { type: 'init'; content: string; settings: EditorSettings; document: DocumentInfo }
   | { type: 'update'; content: string }
+  /** Always answers a `reload` (after its `update`, if any); the webview resumes sending edits. */
+  | { type: 'reloadDone' }
   | { type: 'settings'; settings: EditorSettings }
   | { type: 'insertText'; text: string };
 
@@ -72,6 +74,7 @@ export type ClientMessage =
   | { type: 'selectFont' }
   | { type: 'pasteImage'; dataUrl: string; mimeType: string; name?: string }
   | { type: 'save'; content: string }
+  | { type: 'reload' }
   | { type: 'info'; content: string }
   | { type: 'error'; content: string }
   | { type: 'openLink'; href: string }

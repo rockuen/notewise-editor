@@ -14,6 +14,7 @@ NoteWise Markdown Editor combines a calendar sidebar with a polished Markdown li
 - Inline code keeps the same font size as surrounding text for readability.
 - Obsidian-style wiki links with `[[` note suggestions, clickable highlighted `[[Note]]` text, and missing-note creation.
 - Pasted images are saved to an `assets` folder and inserted as Markdown image links.
+- A Reload button next to Save re-reads the note from disk, so edits made in another app (e.g. Obsidian) show up. It asks first when there are unsaved changes.
 - Explorer context menu, editor tab menu, and `Ctrl+Shift+Alt+M` / `Cmd+Shift+Alt+M` open shortcut.
 - Custom CSS injection for editor layout and Markdown styling tweaks.
 - Black and white editor palettes with automatic VS Code theme detection.
