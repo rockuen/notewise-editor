@@ -1136,7 +1136,10 @@ body {
 .cal-day:hover { background: var(--hover); }
 .cal-day.other-month { color: var(--muted); opacity: 0.4; }
 .cal-day.today .day-num { background: var(--today-bg); color: var(--today-fg); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
-.cal-day.selected { background: var(--hover); }
+/* --hover alone was indistinguishable from hovering; tint with the accent and ring it. */
+.cal-day.selected { background: color-mix(in srgb, var(--accent) 34%, transparent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cal-day.selected:hover { background: color-mix(in srgb, var(--accent) 44%, transparent); }
+.cal-day.selected .day-num { font-weight: 700; }
 .cal-day.sunday .day-num { color: var(--sun); }
 .cal-day.saturday .day-num { color: var(--sat); }
 .cal-day.today .day-num { color: var(--today-fg); }
