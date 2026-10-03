@@ -86,6 +86,11 @@ const KEEP_CALENDARS = [
     '162851ed8239957135c8f6434739992275e805d2b0cf4e25486f40ce8fea9e36@group.calendar.google.com',
     'fa80c623d67a6d1b2b4f12a709bb8a6b94e5ba1ba198fbe89ea1d6bc27f8c958@group.calendar.google.com',
 ];
+// 스케줄 표시 여부 (noteWise.calendar.showSchedule). 꺼져 있으면 gogcli를 아예 호출하지 않는다.
+function isScheduleEnabled() {
+    return vscode.workspace.getConfiguration('noteWise.calendar').get('showSchedule', true) !== false;
+}
+
 // gogcli 바이너리 경로 해석: 설정(noteWise.calendar.gogPath) > 표준 후보 > 기본 설치 경로
 let _resolvedGogPath = null;
 function resolveGogPath() {
@@ -603,13 +608,16 @@ class CalendarViewProvider {
                 vscode.env.clipboard.writeText(absPath);
                 this._postMessage('commandSaved', { time: '', label: 'copy', text: absPath });
             } else if (msg.type === 'fetchEvents') {
+                if (this._scheduleTurnedOff()) return;
                 checkGogStatus().then((gog) => {
+                    if (this._scheduleTurnedOff()) return;
                     if (gog.status !== 'ready') {
                         this._postMessage('gogStatus', gog.status);
                         return;
                     }
                     this._postMessage('gogStatus', 'ready');
                     fetchGoogleEvents(msg.from, msg.to, gog.account).then((result) => {
+                        if (this._scheduleTurnedOff()) return;
                         if (result.__authError) {
                             this._postMessage('authError', true);
                         } else {
@@ -653,6 +661,16 @@ class CalendarViewProvider {
                 installGogcli();
             } else if (msg.type === 'setGogPath') {
                 setGogPathInteractive();
+            } else if (msg.type === 'disableSchedule') {
+                // 워크스페이스 값이 있으면 그쪽이 이기므로 같은 곳에 쓴다. 새로고침은 onDidChangeConfiguration이 맡는다.
+                const config = vscode.workspace.getConfiguration('noteWise.calendar');
+                const target = config.inspect('showSchedule')?.workspaceValue !== undefined
+                    ? vscode.ConfigurationTarget.Workspace
+                    : vscode.ConfigurationTarget.Global;
+                config.update('showSchedule', false, target)
+                    .then(undefined, (err) => {
+                        vscode.window.showErrorMessage(`Failed to turn off the schedule: ${err?.message || String(err)}`);
+                    });
             }
         });
     }
@@ -1009,7 +1027,9 @@ class CalendarViewProvider {
 
     async _refreshAll() {
         this._dateMap = await indexFiles();
+        if (this._scheduleTurnedOff()) return;
         const gog = await checkGogStatus();
+        if (this._scheduleTurnedOff()) return;
         this._gogStatus = gog.status;
         if (gog.status !== 'ready') {
             this._eventMap = {};
@@ -1024,6 +1044,7 @@ class CalendarViewProvider {
         const lastDay = new Date(y, m + 1, 0).getDate();
         const to = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
         const result = await fetchGoogleEvents(from, to, gog.account);
+        if (this._scheduleTurnedOff()) return;
         if (result.__authError) {
             this._eventMap = {};
             this._postMessage('authError', true);
@@ -1031,6 +1052,15 @@ class CalendarViewProvider {
             this._eventMap = result;
             this._postMessage('authError', false);
         }
+    }
+
+    // 스케줄이 꺼져 있으면 비활성 상태를 알리고 true. gogcli를 기다리는 사이 꺼질 수 있어 await 뒤마다 다시 확인한다.
+    _scheduleTurnedOff() {
+        if (isScheduleEnabled()) return false;
+        this._gogStatus = 'disabled';
+        this._eventMap = {};
+        this._postMessage('gogStatus', 'disabled');
+        return true;
     }
 
     async _updateIndex() {
@@ -1336,6 +1366,7 @@ window.addEventListener('message', (e) => {
         dateIndex = e.data.data;
         if (!searchResults) render();
     } else if (e.data.type === 'updateEvents') {
+        if (gogStatus === 'disabled') return;
         eventIndex = { ...eventIndex, ...e.data.data };
         if (!searchResults) render();
     } else if (e.data.type === 'commandSaved') {
@@ -1359,10 +1390,22 @@ window.addEventListener('message', (e) => {
         searchResults = { ...e.data.data, mode: 'recent' };
         renderRecent();
     } else if (e.data.type === 'authError') {
+        if (gogStatus === 'disabled') return;
         gogAuthError = e.data.data;
         if (!searchResults) render();
     } else if (e.data.type === 'gogStatus') {
+        const wasDisabled = gogStatus === 'disabled';
         gogStatus = e.data.data;
+        if (gogStatus === 'disabled') {
+            eventIndex = {};
+            gogAuthError = false;
+            loadedMonths.clear();
+        } else if (wasDisabled) {
+            // 다시 켜짐: 호스트 새로고침이 이번 달을 불러오고, 보고 있는 달·선택한 날의 달은 여기서 요청한다.
+            loadedMonths.add(toISO(new Date()).substring(0, 7));
+            ensureEventsLoaded(currentMonth.getFullYear(), currentMonth.getMonth());
+            ensureEventsLoaded(selectedDate.getFullYear(), selectedDate.getMonth());
+        }
         if (!searchResults) render();
     } else if (e.data.type === 'activeFile') {
         if (e.data.data && e.data.data.path) {
@@ -1671,6 +1714,7 @@ function renderPropertiesPanel() {
 }
 
 function ensureEventsLoaded(year, month) {
+    if (gogStatus === 'disabled') return;
     const key = year + '-' + pad2(month + 1);
     if (loadedMonths.has(key)) return;
     loadedMonths.add(key);
@@ -1725,35 +1769,44 @@ function render() {
         html += '<div class="date-label"><button class="nav-sm" onclick="navigateDay(-1)">\\u2190</button><span>' + dateStr + '</span><button class="nav-sm" onclick="navigateDay(1)">\\u2192</button></div>';
     }
 
+    const scheduleOn = gogStatus !== 'disabled';
     let allEvents = [];
     let allFiles = [];
     for (const iso of allSelected) {
-        const evts = eventIndex[iso] || [];
+        const evts = scheduleOn ? (eventIndex[iso] || []) : [];
         for (const ev of evts) allEvents.push({ ...ev, date: iso });
         const items = dateIndex[iso] || [];
         for (const item of items) allFiles.push(item);
     }
     syncPropertiesForActiveFile();
 
-    if (gogStatus === 'notInstalled') {
+    // 스케줄을 원치 않으면 안내 박스에서 바로 끌 수 있게 한다 (noteWise.calendar.showSchedule = false).
+    const disableScheduleBtn = '<button class="auth-btn" title="\\uC2A4\\uCF00\\uC904 \\uD45C\\uC2DC\\uB97C \\uB055\\uB2C8\\uB2E4 (\\uC124\\uC815\\uC5D0\\uC11C \\uB2E4\\uC2DC \\uCF24 \\uC218 \\uC788\\uC74C)" onclick="vscode.postMessage({type:\\u0027disableSchedule\\u0027})">\\u{1F515} \\uC2A4\\uCF00\\uC904 \\uB044\\uAE30</button>';
+
+    if (!scheduleOn) {
+        // Schedule section hidden entirely.
+    } else if (gogStatus === 'notInstalled') {
         html += '<div class="event-section"><div class="event-section-header">\\u{1F4C5} Schedule</div>';
         html += '<div class="gog-status-msg"><span>\\u{1F4E6} gogcli \\uBBF8\\uC124\\uCE58</span>';
         html += '<div class="gog-hint">Google Calendar \\uC5F0\\uB3D9\\uC744 \\uC704\\uD574 gogcli\\uB97C \\uC124\\uCE58\\uD558\\uC138\\uC694.</div>';
         html += '<button class="auth-btn" onclick="vscode.postMessage({type:\\u0027installGogcli\\u0027})">\\u{1F680} \\uC790\\uB3D9 \\uC124\\uCE58</button>';
         html += '<button class="auth-btn" onclick="vscode.postMessage({type:\\u0027setGogPath\\u0027})">\\u{1F4C1} \\uACBD\\uB85C \\uC9C0\\uC815</button>';
         html += '<a class="auth-btn" href="https://github.com/openclaw/gogcli" target="_blank">\\u{1F4D6} \\uAC00\\uC774\\uB4DC</a>';
+        html += disableScheduleBtn;
         html += '</div></div>';
     } else if (gogStatus === 'noAccount') {
         html += '<div class="event-section"><div class="event-section-header">\\u{1F4C5} Schedule</div>';
         html += '<div class="gog-status-msg"><span>\\u{1F464} Google \\uACC4\\uC815 \\uBBF8\\uB4F1\\uB85D</span>';
         html += '<div class="gog-hint">\\uD130\\uBBF8\\uB110\\uC5D0\\uC11C Google \\uACC4\\uC815\\uC744 \\uB4F1\\uB85D\\uD558\\uC138\\uC694.</div>';
         html += '<button class="auth-btn" onclick="vscode.postMessage({type:\\u0027gogLogin\\u0027})">\\u{1F511} \\uB85C\\uADF8\\uC778</button>';
+        html += disableScheduleBtn;
         html += '</div></div>';
     } else if (gogAuthError) {
         html += '<div class="event-section"><div class="event-section-header">\\u{1F4C5} Schedule</div>';
         html += '<div class="gog-status-msg"><span>\\u{1F512} \\uD1A0\\uD070 \\uB9CC\\uB8CC</span>';
         html += '<div class="gog-hint">Google \\uC778\\uC99D\\uC774 \\uB9CC\\uB8CC\\uB418\\uC5C8\\uC2B5\\uB2C8\\uB2E4. \\uC7AC\\uB85C\\uADF8\\uC778\\uD558\\uC138\\uC694.</div>';
         html += '<button class="auth-btn" onclick="vscode.postMessage({type:\\u0027gogLogin\\u0027})">\\u{1F511} \\uC7AC\\uB85C\\uADF8\\uC778</button>';
+        html += disableScheduleBtn;
         html += '</div></div>';
     } else if (allEvents.length > 0) {
         html += '<div class="event-section"><div class="event-section-header">\\u{1F4C5} Schedule <span class="badge">' + allEvents.length + '</span></div>';
@@ -2022,10 +2075,10 @@ function activateDateWise(context) {
         })
     );
 
-    // gogPath 설정 변경 시 경로/상태 캐시 무효화 후 새로고침
+    // gogPath / showSchedule 설정 변경 시 경로/상태 캐시 무효화 후 새로고침
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('noteWise.calendar.gogPath')) {
+            if (e.affectsConfiguration('noteWise.calendar.gogPath') || e.affectsConfiguration('noteWise.calendar.showSchedule')) {
                 resetGogPathCache();
                 resetGogStatusCache();
                 vscode.commands.executeCommand('noteWise.calendar.refresh');

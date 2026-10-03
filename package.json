@@ -2,7 +2,7 @@
   "name": "notewise-editor",
   "displayName": "NoteWise Markdown Editor",
   "description": "No more Obsidian switching. Calendar-aware Markdown editor for VS Code.",
-  "version": "0.1.53",
+  "version": "0.1.54",
   "publisher": "rockuen",
   "author": {
     "name": "rockuen",
@@ -275,6 +275,11 @@
           "type": "string",
           "default": "0. Inbox",
           "description": "Folder where New Note creates files. Relative paths are resolved from the workspace root. Examples: 0. Inbox, 00-inbox, 1. Daily."
+        },
+        "noteWise.calendar.showSchedule": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Google Calendar schedule (via gogcli) in the calendar sidebar. Turn off to hide it and stop every gogcli call, including the login and token-expired prompts."
         },
         "noteWise.calendar.gogPath": {
           "type": "string",

@@ -7,6 +7,7 @@ NoteWise Markdown Editor combines a calendar sidebar with a polished Markdown li
 ## Features
 
 - Calendar sidebar with date-based note navigation from DateWise.
+- Optional Google Calendar schedule in the calendar sidebar (via gogcli). Set `noteWise.calendar.showSchedule` to `false` - or click the turn-off button in the login/token-expired box - to hide it and stop every gogcli call.
 - Custom live editor for `.md` and `.markdown` files.
 - Markdown preview behavior for tables, images, links, headings, lists, and blockquotes while staying editable.
 - External `http`, `https`, `mailto`, and `tel` links open through the OS default browser/app.
@@ -50,6 +51,7 @@ NoteWise keeps the existing setting keys for compatibility:
 {
   "noteWise.openHtmlIn": "browser",
   "noteWise.calendar.openMarkdownIn": "editor",
+  "noteWise.calendar.showSchedule": true,
   "noteWise.editor.theme.mode": "auto",
   "noteWise.editor.ui.fontFamily": "",
   "noteWise.editor.imageSaveFolder": "assets",
