@@ -6,7 +6,7 @@ NoteWise Markdown Editor combines a calendar sidebar with a polished Markdown li
 
 ## Features
 
-- Calendar sidebar with date-based note navigation from DateWise.
+- Calendar sidebar with date-based note navigation from DateWise. It opens in the right-hand Secondary Side Bar by default (VS Code 1.106+); `Ctrl+Shift+B` / `Cmd+Shift+B` toggles it. Drag the NoteWise icon to move it elsewhere - VS Code remembers your layout.
 - Optional Google Calendar schedule in the calendar sidebar (via gogcli). Set `noteWise.calendar.showSchedule` to `false` - or click the turn-off button in the login/token-expired box - to hide it and stop every gogcli call.
 - Custom live editor for `.md` and `.markdown` files.
 - Markdown preview behavior for tables, images, links, headings, lists, and blockquotes while staying editable.
