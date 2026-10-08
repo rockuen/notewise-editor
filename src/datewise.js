@@ -47,16 +47,56 @@ function getFileGroup(ext) {
 
 // ── 파일 인덱싱 ──
 
+// 캘린더 색인과 파일 찾기에서 빼는 폴더. findFiles는 여기에 더해 사용자의
+// files.exclude도 적용한다. .agent-sessions(에이전트 세션·가상 홈)는 날짜 노트가
+// 없는 수만 개 파일이라 files.exclude에 없는 볼트를 위해 명시해 둔다.
+const INDEX_EXCLUDE_DIRS = ['node_modules', '.git', '.obsidian', 'dist', 'build', '.agent-sessions'];
+const INDEX_EXCLUDE_GLOB = `{${INDEX_EXCLUDE_DIRS.map((d) => `**/${d}/**`).join(',')},**/.smtcmp*}`;
+// 워크스페이스 기준 상대 경로('/'로 시작, '/' 구분)에서 제외 폴더를 찾는다. 절대
+// 경로로 보면 볼트가 build·dist 같은 이름의 폴더 아래 있을 때 모든 이벤트가 걸러진다.
+const INDEX_EXCLUDE_PATH_RE = new RegExp(
+    `/(?:${INDEX_EXCLUDE_DIRS.map((d) => d.replace(/\./g, '\\.')).join('|')}|\\.smtcmp[^/]*)(?:/|$)`
+);
+const REINDEX_DEBOUNCE_MS = 1000;
+const REINDEX_MAX_WAIT_MS = 5000;
+// 감시자가 이벤트를 놓쳤을 때(과부하·재시작, git pull, 동기화) 뷰 표시나 창 포커스로
+// 다시 색인하되, 이 간격보다 자주는 하지 않는다.
+const REINDEX_HEAL_INTERVAL_MS = 60 * 1000;
+
+function isIndexExcludedRelPath(relPath) {
+    return INDEX_EXCLUDE_PATH_RE.test(relPath);
+}
+
+// Windows·macOS 파일 시스템은 대소문자를 가리지 않는다.
+function foldIndexPath(p) {
+    return process.platform === 'linux' ? p : p.toLowerCase();
+}
+
+// 색인된 파일들이 들어 있는 모든 상위 폴더(대소문자 접음). 폴더 삭제 이벤트가
+// 색인에 영향을 주는지 바로 판정하는 데 쓴다.
+function indexedAncestorDirs(dateMap) {
+    const dirs = new Set();
+    for (const entries of Object.values(dateMap)) {
+        for (const entry of entries) {
+            let dir = path.dirname(entry.path);
+            while (!dirs.has(foldIndexPath(dir))) {
+                dirs.add(foldIndexPath(dir));
+                const up = path.dirname(dir);
+                if (up === dir) break;
+                dir = up;
+            }
+        }
+    }
+    return dirs;
+}
+
 async function indexFiles() {
     const dateMap = {};
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) return dateMap;
 
     const rootPath = workspaceFolders[0].uri.fsPath;
-    const files = await vscode.workspace.findFiles(
-        '**/*',
-        '{**/node_modules/**,**/.git/**,**/.obsidian/**,**/dist/**,**/build/**,**/.smtcmp*}'
-    );
+    const files = await vscode.workspace.findFiles('**/*', INDEX_EXCLUDE_GLOB);
 
     for (const fileUri of files) {
         const filename = path.basename(fileUri.fsPath);
@@ -543,10 +583,37 @@ class CalendarViewProvider {
         this._eventMap = {};
         this._lastActiveMarkdownPath = '';
         this._lastPostedMarkdownPath = '';
+        // 뷰에 딸린 감시자·리스너. 뷰를 다시 띄우거나 닫으면 한꺼번에 정리한다.
+        this._viewDisposables = [];
+        this._reindexTimer = null;
+        this._reindexDueBy = 0;
+        this._reindexing = false;
+        this._reindexAgain = false;
+        this._indexGen = 0;
+        this._appliedIndexGen = 0;
+        this._indexedDirs = new Set();
+        this._indexedAt = 0;
+        context.subscriptions.push({ dispose: () => this._disposeViewResources() });
+    }
+
+    _disposeViewResources() {
+        for (const d of this._viewDisposables) {
+            try { d.dispose(); } catch { /* 이미 정리됨 */ }
+        }
+        this._viewDisposables = [];
+        if (this._reindexTimer) clearTimeout(this._reindexTimer);
+        this._reindexTimer = null;
+        this._reindexDueBy = 0;
     }
 
     resolveWebviewView(webviewView) {
+        this._disposeViewResources();
         this._view = webviewView;
+        this._viewDisposables.push(webviewView.onDidDispose(() => {
+            if (this._view !== webviewView) return;
+            this._disposeViewResources();
+            this._view = null;
+        }));
         webviewView.webview.options = {
             enableScripts: true,
             enableCommandUris: true,
@@ -557,24 +624,43 @@ class CalendarViewProvider {
             this._syncActiveMarkdownFile();
         });
 
+        // 파일이 바뀔 때마다 색인을 다시 만들면 안 된다. 색인은 워크스페이스 전체를
+        // 훑는데(수천~수만 개), 그동안 같은 확장 호스트에서 도는 다른 확장(CLI
+        // 런처의 터미널 출력 등)이 통째로 멈춘다. 예전엔 모든 생성·수정·삭제마다
+        // 디바운스 없이 색인해서, 에이전트가 파일을 쓰는 동안 스캔이 겹겹이 쌓였다.
+        // 색인은 파일 이름의 날짜만 보므로 생성·삭제만 의미가 있다.
         const watcher = vscode.workspace.createFileSystemWatcher('**/*');
-        const refreshFiles = (uri) => {
-            this._updateIndex().then(() => {
-                this._postMessage('updateIndex', this._dateMap);
-                if (uri?.fsPath && uri.fsPath === this._lastActiveMarkdownPath) {
-                    this._setActiveMarkdownFile(uri.fsPath, true);
-                }
-            });
+        this._viewDisposables.push(watcher);
+        const refreshActiveFile = (uri) => {
+            if (uri?.fsPath && uri.fsPath === this._lastActiveMarkdownPath) {
+                this._setActiveMarkdownFile(uri.fsPath, true);
+            }
         };
-        watcher.onDidCreate(refreshFiles);
-        watcher.onDidDelete(refreshFiles);
-        watcher.onDidChange(refreshFiles);
+        watcher.onDidCreate((uri) => {
+            this._onFileCreated(uri);
+            refreshActiveFile(uri);
+        });
+        watcher.onDidDelete((uri) => {
+            this._onFileDeleted(uri);
+            refreshActiveFile(uri);
+        });
+        // 내용 수정은 파일 이름(=날짜)을 바꾸지 않으므로 색인과 무관하다.
+        // 열려 있는 노트의 속성만 다시 읽는다.
+        watcher.onDidChange(refreshActiveFile);
+
+        // 놓친 이벤트를 메운다: 뷰가 다시 보이거나 창에 포커스가 돌아오면 다시 색인.
+        this._viewDisposables.push(webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) this._healIndex();
+        }));
+        this._viewDisposables.push(vscode.window.onDidChangeWindowState((state) => {
+            if (state.focused) this._healIndex();
+        }));
 
         const syncActiveFile = () => this._scheduleActiveMarkdownSync();
-        this._context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(syncActiveFile));
-        this._context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(syncActiveFile));
-        this._context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(syncActiveFile));
-        this._context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabGroups(syncActiveFile));
+        this._viewDisposables.push(vscode.window.onDidChangeActiveTextEditor(syncActiveFile));
+        this._viewDisposables.push(vscode.window.onDidChangeVisibleTextEditors(syncActiveFile));
+        this._viewDisposables.push(vscode.window.tabGroups.onDidChangeTabs(syncActiveFile));
+        this._viewDisposables.push(vscode.window.tabGroups.onDidChangeTabGroups(syncActiveFile));
         syncActiveFile();
 
         webviewView.webview.onDidReceiveMessage((msg) => {
@@ -930,7 +1016,7 @@ class CalendarViewProvider {
         const rootPath = workspaceFolders[0].uri.fsPath;
         const files = await vscode.workspace.findFiles(
             '**/*',
-            '{**/node_modules/**,**/.git/**,**/.obsidian/**,**/dist/**,**/build/**,**/.smtcmp*}',
+            INDEX_EXCLUDE_GLOB,
             500
         );
         const keywords = query.toLowerCase().split(/\s+/);
@@ -961,7 +1047,7 @@ class CalendarViewProvider {
         const rootPath = workspaceFolders[0].uri.fsPath;
         const files = await vscode.workspace.findFiles(
             '**/*',
-            '{**/node_modules/**,**/.git/**,**/.obsidian/**,**/dist/**,**/build/**,**/.smtcmp*}',
+            INDEX_EXCLUDE_GLOB,
             5000
         );
         const items = [];
@@ -989,7 +1075,7 @@ class CalendarViewProvider {
         const textExts = ['.md', '.txt', '.csv', '.json', '.tsv', '.js', '.ts', '.py', '.html', '.css', '.yaml', '.yml', '.xml', '.sql', '.sh', '.bat', '.canvas', '.log'];
         const files = await vscode.workspace.findFiles(
             '**/*',
-            '{**/node_modules/**,**/.git/**,**/.obsidian/**,**/dist/**,**/build/**,**/.smtcmp*}',
+            INDEX_EXCLUDE_GLOB,
             2000
         );
         const queryLower = query.toLowerCase();
@@ -1026,7 +1112,7 @@ class CalendarViewProvider {
     }
 
     async _refreshAll() {
-        this._dateMap = await indexFiles();
+        await this._updateIndex();
         if (this._scheduleTurnedOff()) return;
         const gog = await checkGogStatus();
         if (this._scheduleTurnedOff()) return;
@@ -1064,7 +1150,89 @@ class CalendarViewProvider {
     }
 
     async _updateIndex() {
-        this._dateMap = await indexFiles();
+        // 늦게 끝난 옛 스캔이 이미 반영된 새 스캔 결과를 덮어쓰지 않게 한다. 옛 스캔이
+        // 먼저 끝나면 일단 반영하고, 새 스캔이 끝날 때 다시 덮는다.
+        const gen = ++this._indexGen;
+        const dateMap = await indexFiles();
+        if (gen < this._appliedIndexGen) return;
+        this._appliedIndexGen = gen;
+        this._dateMap = dateMap;
+        this._indexedDirs = indexedAncestorDirs(dateMap);
+        this._indexedAt = Date.now();
+    }
+
+    // 날짜가 든 파일, 또는 폴더(옮겨 들어온 폴더는 폴더 하나의 이벤트로 온다)가 생기면 색인.
+    async _onFileCreated(uri) {
+        if (!uri?.fsPath || isIndexExcludedRelPath(this._relPath(uri))) return;
+        if (extractDateFromFilename(path.basename(uri.fsPath))) {
+            this._scheduleReindex();
+            return;
+        }
+        try {
+            const stat = await vscode.workspace.fs.stat(uri);
+            if (stat.type & vscode.FileType.Directory) this._scheduleReindex();
+        } catch {
+            // 곧바로 이름이 바뀐 임시 파일 등 — 이미 없다.
+        }
+    }
+
+    // 날짜가 든 파일, 또는 색인된 파일을 품은 폴더가 사라지면 색인. 폴더를 지우거나
+    // 옮기면 하위 파일 이벤트 없이 폴더 하나만 온다.
+    _onFileDeleted(uri) {
+        if (!uri?.fsPath || isIndexExcludedRelPath(this._relPath(uri))) return;
+        if (extractDateFromFilename(path.basename(uri.fsPath)) || this._indexHasEntryUnder(uri.fsPath)) {
+            this._scheduleReindex();
+        }
+    }
+
+    _relPath(uri) {
+        return '/' + vscode.workspace.asRelativePath(uri, false).replace(/\\/g, '/');
+    }
+
+    // git checkout이나 동기화는 삭제 이벤트를 수백 개씩 보내므로 색인 전체를 훑지 않고
+    // 색인할 때 만들어 둔 상위 폴더 집합에서 찾는다.
+    _indexHasEntryUnder(dirPath) {
+        return this._indexedDirs.has(foldIndexPath(path.normalize(dirPath).replace(/[\\/]+$/, '')));
+    }
+
+    // 창 포커스는 캘린더가 보일 때만 본다. 숨어 있다가 다시 보이면 가시성 이벤트가 맡는다.
+    _healIndex() {
+        if (!this._view || !this._view.visible) return;
+        if (Date.now() - this._indexedAt >= REINDEX_HEAL_INTERVAL_MS) this._scheduleReindex();
+    }
+
+    // 생성·삭제가 몰려도(빌드 출력, 동기화, 에이전트 작업) 잠잠해진 뒤 한 번만 색인한다.
+    // 계속 몰려도 최대 대기 시간이 지나면 한 번은 색인한다. 색인 중에 또 바뀌면 끝난 뒤 한 번 더.
+    _scheduleReindex() {
+        const now = Date.now();
+        if (!this._reindexDueBy) this._reindexDueBy = now + REINDEX_MAX_WAIT_MS;
+        const delay = Math.max(0, Math.min(REINDEX_DEBOUNCE_MS, this._reindexDueBy - now));
+        if (this._reindexTimer) clearTimeout(this._reindexTimer);
+        this._reindexTimer = setTimeout(() => {
+            this._reindexTimer = null;
+            this._reindexDueBy = 0;
+            this._runReindex();
+        }, delay);
+    }
+
+    async _runReindex() {
+        if (this._reindexing) {
+            this._reindexAgain = true;
+            return;
+        }
+        this._reindexing = true;
+        try {
+            await this._updateIndex();
+            this._postMessage('updateIndex', this._dateMap);
+        } catch {
+            // 다음 이벤트나 수동 새로고침에서 다시 색인한다.
+        } finally {
+            this._reindexing = false;
+            if (this._reindexAgain) {
+                this._reindexAgain = false;
+                if (this._view) this._scheduleReindex();
+            }
+        }
     }
 
     _getHtml() {
@@ -2083,6 +2251,8 @@ function activateDateWise(context) {
                 resetGogStatusCache();
                 vscode.commands.executeCommand('noteWise.calendar.refresh');
             }
+            // findFiles가 files.exclude를 따르므로 바뀌면 색인 대상도 바뀐다.
+            if (e.affectsConfiguration('files.exclude') && provider._view) provider._scheduleReindex();
         })
     );
 
