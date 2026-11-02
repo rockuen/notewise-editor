@@ -108,6 +108,11 @@ export function createMarkdownEditor(
       click: (bom: Element | null) => openVditorLink(bom),
     },
     toolbar: createToolbar(reloadFromDisk),
+    // vditor 3.11.2 calls this unguarded from every WYSIWYG block popover (table,
+    // heading, code, quote, list, image…) but ships no default for it, so the call
+    // threw "customWysiwygToolbar is not a function" before the popover was
+    // positioned — the popover never showed. A no-op lets it finish.
+    customWysiwygToolbar: () => {},
     hint: createWikiLinkHint(documentInfo.wikiLinks),
     input(value: string) {
       if (applyingRemoteUpdate) return;
