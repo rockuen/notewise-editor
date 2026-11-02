@@ -2486,6 +2486,61 @@ body {
 .vditor-reset .hljs-literal {
   color: #6cb6ff !important;
 }
+/* A raw HTML block (e.g. a clipped <table>) or a $$ math block shows its rendered
+   preview inside a <pre>, so the code-block rule above painted it dark while the
+   content kept the page text color — black on black on a light page. The preview
+   is document content, not code: show it on the page like the markdown around it.
+   Same for the WYSIWYG edit mode, which wraps blocks in its own classes. */
+.vditor-reset .vditor-ir__node[data-type="html-block"] > pre.vditor-ir__preview,
+.vditor-reset .vditor-ir__node[data-type="math-block"] > pre.vditor-ir__preview,
+.vditor-reset .vditor-wysiwyg__block[data-type="html-block"] > pre.vditor-wysiwyg__preview,
+.vditor-reset .vditor-wysiwyg__block[data-type="math-block"] > pre.vditor-wysiwyg__preview {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+}
+/* <code> inside that preview still matches "pre code" (near-white for the dark
+   box) — style it as inline code, but leave a nested <pre><code> block dark. */
+.vditor-reset .vditor-ir__node[data-type="html-block"] > pre.vditor-ir__preview code:not(.vditor-ir__preview pre code),
+.vditor-reset .vditor-wysiwyg__block[data-type="html-block"] > pre.vditor-wysiwyg__preview code:not(.vditor-wysiwyg__preview pre code) {
+  padding: 0 .24em !important;
+  border-radius: 3px !important;
+  background: color-mix(in srgb, var(--msl-doc-fg, #e8eaed) 8%, transparent) !important;
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
+}
+/* Cells of a clipped HTML table often wrap their text in <p> (or <div><p>, a
+   list…); the block margins above would double every row's height. Markdown
+   cells never hold block elements, so this only reaches HTML tables. */
+.vditor-reset :is(td, th) :is(p, div, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, pre, table) {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.vditor-reset :is(td, th) :is(p, div, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, pre, table)
+  + :is(p, div, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, pre, table) {
+  margin-top: .4em !important;
+}
+/* vditor props up each row's first cell with a 24px inline-block (::after) so an
+   empty markdown cell keeps a caret line. After a block <p> it wraps onto a line
+   of its own and adds 24px to every row; the HTML preview is never typed into. */
+.vditor-reset :is(.vditor-ir__preview, .vditor-wysiwyg__preview) :is(td, th):first-child::after {
+  content: none !important;
+}
+/* The source shown while editing a code/HTML/math block sits in an inline <pre>
+   (vditor IR), so the dark code box never painted behind it — only stray 1px
+   slivers — and the near-white code text was invisible on a light page. Show it
+   as plain text in the page color instead. */
+.vditor-reset pre.vditor-ir__marker--pre {
+  border: 0 !important;
+  background: transparent !important;
+}
+.vditor-reset .vditor-ir__marker--pre > code {
+  color: var(--msl-doc-fg, var(--vscode-editor-foreground)) !important;
+}
 .vditor-panel { z-index: 40; }
 .msl-table-tools { position: absolute; display: none; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--msl-border); border-radius: 7px; background: var(--msl-menu-bg); box-shadow: 0 8px 24px rgba(0,0,0,.28); z-index: 50; }
 .msl-table-tools--visible { display: flex; }
