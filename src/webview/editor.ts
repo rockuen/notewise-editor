@@ -68,6 +68,7 @@ export function createMarkdownEditor(
   parent.innerHTML = '<div class="msl-vditor-host"></div>';
   const host = parent.querySelector<HTMLElement>('.msl-vditor-host');
   if (!host) throw new Error('Missing Vditor host.');
+  let detachImeComposition: (() => void) | undefined;
   let detachTabIndentHandling: (() => void) | undefined;
   let detachHeadingHotkeys: (() => void) | undefined;
   let detachInlineFormatHotkeys: (() => void) | undefined;
@@ -146,6 +147,8 @@ export function createMarkdownEditor(
       });
       detachFindBar?.();
       detachFindBar = mountFindBar(parent);
+      detachImeComposition?.();
+      detachImeComposition = patchImeComposition(parent, vditor);
       detachTabIndentHandling?.();
       detachTabIndentHandling = patchTabIndentHandling(parent, vditor, () => {
         scheduleWikiLinkDecorations(parent);
@@ -205,6 +208,8 @@ export function createMarkdownEditor(
     destroy: () => {
       if (currentVditor === vditor) currentVditor = undefined;
       if (currentSave === save) currentSave = undefined;
+      detachImeComposition?.();
+      detachImeComposition = undefined;
       detachTabIndentHandling?.();
       detachTabIndentHandling = undefined;
       detachHeadingHotkeys?.();
@@ -849,6 +854,170 @@ function patchTabIndentHandling(root: HTMLElement, vditor: Vditor, afterCommand:
   return () => root.removeEventListener('keydown', onKeyDown, true);
 }
 
+// Hangul syllables, compatibility jamo and conjoining jamo.
+const HANGUL_CHAR = /[\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\uac00-\ud7ff]/;
+// Typed after Hangul, none of these can complete a markdown construct.
+const PROSE_PUNCTUATION = new Set([' ', '\u00a0', '.', ',', '?', '!']);
+// `- text`, `1. text`, `> text` still sitting as plain text in a paragraph or a
+// list item: the next re-render turns the line into a list or a quote.
+const RAW_BLOCK_MARKER = /^ {0,3}(?:(?:[-*+]|\d{1,9}[.)])\s|>)/;
+const NON_PROSE_ANCESTOR = [
+  '.vditor-ir__marker',
+  '.vditor-ir__preview',
+  'code',
+  '[data-type="math-inline"]',
+  '[data-type="html-inline"]',
+  '[data-type="footnotes-block"]',
+  '[data-type="link-ref-defs-block"]',
+].join(', ');
+
+/**
+ * The caret's text position when it sits in ordinary prose, where vditor's
+ * re-render would leave the text exactly as typed. Markers, code and raw block
+ * markers are not prose: there the re-render moves or restyles what was typed,
+ * so it has to run right away.
+ */
+function proseCaret(editable: HTMLElement): { node: Text; text: string; offset: number } | undefined {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) return undefined;
+  const { startContainer: node, startOffset: offset } = selection.getRangeAt(0);
+  if (node.nodeType !== Node.TEXT_NODE || !editable.contains(node)) return undefined;
+  const parent = node.parentElement;
+  if (!parent || parent.closest(NON_PROSE_ANCESTOR)) return undefined;
+  // Text typed into an empty note has no block yet; the re-render creates it.
+  const block = parent.closest<HTMLElement>('[data-block="0"]');
+  if (!block || !editable.contains(block)) return undefined;
+  if (block.tagName === 'P' && RAW_BLOCK_MARKER.test((block.textContent ?? '').replace(/\u200b/g, ''))) return undefined;
+  // Typed against a collapsed `## ` marker, a jamo can end up inside the marker.
+  const first = block.firstChild;
+  if (first instanceof HTMLElement && first.classList.contains('vditor-ir__marker--heading') && !/^#{1,6} $/.test(first.textContent ?? '')) {
+    return undefined;
+  }
+  return { node: node as Text, text: (node as Text).data, offset };
+}
+
+/**
+ * Whether the caret's line still holds something the next re-render rewrites.
+ * vditor does not re-render on a space typed at the end of a line, so until the
+ * following keystroke the line can carry a raw block marker (`- ` typed in a
+ * paragraph or on a new line of a list item) or leading whitespace that gets
+ * stripped (the space after `> ` or `- [ ] `).
+ */
+function lineAwaitsRerender(editable: HTMLElement, caret: { node: Text; offset: number }): boolean {
+  const container = caret.node.parentElement?.closest<HTMLElement>('p, li, td, th, h1, h2, h3, h4, h5, h6');
+  if (!container || !editable.contains(container)) return false;
+  const range = document.createRange();
+  range.setStart(container, 0);
+  range.setEnd(caret.node, caret.offset);
+  const before = range.toString().replace(/\u200b/g, '');
+  const line = before.slice(before.lastIndexOf('\n') + 1);
+  if (/^(?:P|LI)$/.test(container.tagName) && RAW_BLOCK_MARKER.test(line)) return true;
+  // What precedes the Hangul run that ends at the caret.
+  let end = line.length;
+  while (end > 0 && HANGUL_CHAR.test(line.charAt(end - 1))) end--;
+  const indent = line.slice(0, end);
+  if (!/^[ \t\u00a0]+$/.test(indent)) return false;
+  // A task item's text keeps one space after its checkbox.
+  return !(indent === ' ' && container.matches('li.vditor-task'));
+}
+
+/**
+ * Keeps vditor from re-rendering in the middle of Hangul typing.
+ *
+ * A Korean IME ends one composition and starts the next on every syllable, and
+ * vditor re-renders the caret's block inside that compositionend — a whole
+ * top-level list when the caret is in one. That is 20–150ms of blocked main
+ * thread, with the block replaced and the selection reset, between the IME
+ * committing a syllable and starting the next one. Typed fast, the IME and the
+ * page fall out of step there and the syllable comes apart (하ㄴ글).
+ *
+ * A Hangul syllable in prose never changes the markdown structure, so that
+ * re-render is skipped: the event is kept from vditor, which is only told to
+ * restart its debounce (host sync, undo snapshot, `[[` hint). A space or
+ * sentence punctuation typed after Hangul gets the same treatment — vditor
+ * would otherwise serialize the whole note on the spot. Everything else, and
+ * Hangul typed anywhere a re-render matters (see proseCaret and
+ * lineAwaitsRerender), goes to vditor unchanged, and its next re-render takes
+ * in the text held back here. Until then the outline and a `[toc]` block keep
+ * the heading text from the last re-render.
+ *
+ * This leans on vditor 3.11.2 internals — re-check them on an upgrade: the IR
+ * listeners sit on the editable itself (so a capture listener on an ancestor
+ * runs first), an input event seen while `ir.preventInput` is set only calls
+ * processAfterRender, and that debounce does nothing while `ir.composingLock`
+ * is set.
+ */
+function patchImeComposition(root: HTMLElement, vditor: Vditor): () => void {
+  const activeIr = (event: Event) => {
+    const internal = getInternalVditor(vditor);
+    const ir = internal?.currentMode === 'ir' ? internal.ir : undefined;
+    const element = ir?.element;
+    if (!ir || !element || !(event.target instanceof Node) || !element.contains(event.target)) return undefined;
+    return { ir, element };
+  };
+
+  // vditor's input listener, with `preventInput` set, only restarts the debounce.
+  let debouncedInput: Event | undefined;
+
+  // No isTrusted check: Chromium reports false for the IME's own compositionend.
+  const onCompositionEnd = (event: Event) => {
+    const active = activeIr(event);
+    if (!active) return;
+    // Other IMEs commit whole phrases, which can carry markdown. Empty data is
+    // a composition deleted back to nothing, with Hangul still before the caret.
+    const data = (event as CompositionEvent).data ?? '';
+    if ([...data].some((char) => !HANGUL_CHAR.test(char))) return;
+    const caret = proseCaret(active.element);
+    if (!caret || caret.offset === 0 || !HANGUL_CHAR.test(caret.text.charAt(caret.offset - 1))) return;
+    if (lineAwaitsRerender(active.element, caret)) return;
+
+    event.stopPropagation();
+    // vditor's own listener would have cleared this after re-rendering.
+    active.ir.composingLock = false;
+    active.ir.preventInput = true;
+    try {
+      active.element.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    } finally {
+      active.ir.preventInput = false;
+    }
+  };
+
+  const onInput = (event: Event) => {
+    const input = event as InputEvent;
+    if (!input.isTrusted || input.isComposing || input.inputType !== 'insertText') return;
+    if (!input.data || !PROSE_PUNCTUATION.has(input.data)) return;
+    const active = activeIr(event);
+    if (!active) return;
+    const caret = proseCaret(active.element);
+    if (!caret || !PROSE_PUNCTUATION.has(caret.text.charAt(caret.offset - 1))) return;
+    // `1. ` starts a list and `# ` a heading; only a run that follows Hangul is prose.
+    let index = caret.offset - 2;
+    while (index >= 0 && PROSE_PUNCTUATION.has(caret.text.charAt(index))) index--;
+    if (index < 0 || !HANGUL_CHAR.test(caret.text.charAt(index))) return;
+    if (lineAwaitsRerender(active.element, caret)) return;
+
+    active.ir.preventInput = true;
+    debouncedInput = event;
+  };
+
+  // Clears the flag even if vditor's listener never saw the event.
+  const onInputHandled = (event: Event) => {
+    if (event !== debouncedInput) return;
+    debouncedInput = undefined;
+    const ir = getInternalVditor(vditor)?.ir;
+    if (ir) ir.preventInput = false;
+  };
+
+  root.addEventListener('compositionend', onCompositionEnd, true);
+  root.addEventListener('input', onInput, true);
+  root.addEventListener('input', onInputHandled);
+  return () => {
+    root.removeEventListener('compositionend', onCompositionEnd, true);
+    root.removeEventListener('input', onInput, true);
+    root.removeEventListener('input', onInputHandled);
+  };
+}
+
 // Alt+1..Alt+5 map the current block to a heading level (H2..H6). We deliberately
 // offset by one — Alt+1 is H2, not H1 — because H1 is reserved for the note title.
 const HEADING_HOTKEY_LEVELS: Record<string, number> = {
@@ -1225,9 +1394,10 @@ function runVditorToolbarCommand(vditor: Vditor, command: 'indent' | 'outdent' |
 }
 
 type VditorModeState = { element?: HTMLElement; range?: Range };
+type VditorIrState = VditorModeState & { composingLock?: boolean; preventInput?: boolean };
 type VditorInternal = {
   currentMode?: 'ir' | 'wysiwyg' | 'sv';
-  ir?: VditorModeState;
+  ir?: VditorIrState;
   wysiwyg?: VditorModeState;
   sv?: VditorModeState;
   toolbar?: { elements?: Record<string, HTMLElement> };
